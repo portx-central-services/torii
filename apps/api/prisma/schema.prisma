@@ -1,0 +1,141 @@
+// Torii — Prisma schema
+// See openspec/changes/add-integration-dashboard/design.md for rationale.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Phase {
+  Discovery
+  Build
+  UAT
+  Launch
+  Hypercare
+}
+
+enum ProjectState {
+  OnTrack
+  AtRisk
+  Blocked
+  Done
+}
+
+enum Role {
+  PM
+  Viewer
+}
+
+enum TrackerProvider {
+  monday
+}
+
+enum TrackerConnectionStatus {
+  ok
+  auth_failed
+  rate_limited
+}
+
+model Person {
+  id                  String       @id @default(cuid())
+  name                String
+  email               String       @unique
+  role                Role         @default(Viewer)
+  defaultCapacityPct  Int          @default(100) @map("default_capacity_pct")
+  isAdmin             Boolean      @default(false) @map("is_admin")
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+
+  ownedProjects       Project[]    @relation("ProjectOwner")
+  allocations         Allocation[]
+  sessions            Session[]
+  phaseTransitions    PhaseAuditLog[]
+
+  @@map("people")
+}
+
+model Project {
+  id            String       @id @default(cuid())
+  name          String
+  phase         Phase        @default(Discovery)
+  state         ProjectState @default(OnTrack)
+  // { kickoff?, target_go_live?, actual_go_live?, hypercare_end? } - ISO 8601 dates as strings
+  keyDates      Json         @default("{}") @map("key_dates")
+  ownerId       String?      @map("owner_id")
+  // { provider, externalId } or null
+  trackerRef    Json?        @map("tracker_ref")
+  // { fieldName: "torii" | "monday" } - per-field ownership
+  fieldMapping  Json         @default("{}") @map("field_mapping")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  owner             Person?         @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  allocations       Allocation[]
+  phaseTransitions  PhaseAuditLog[]
+
+  @@map("projects")
+}
+
+model Allocation {
+  id        String   @id @default(cuid())
+  projectId String   @map("project_id")
+  personId  String   @map("person_id")
+  pct       Int
+  start     DateTime @db.Date
+  end       DateTime @db.Date
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  person  Person  @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@index([personId, start, end])
+  @@index([projectId, start, end])
+  @@map("allocations")
+}
+
+model TrackerConnection {
+  id              String                  @id @default(cuid())
+  provider        TrackerProvider
+  workspace       String
+  accessTokenEnc  String                  @map("access_token_enc")
+  refreshTokenEnc String?                 @map("refresh_token_enc")
+  status          TrackerConnectionStatus @default(ok)
+  lastSyncedAt    DateTime?               @map("last_synced_at")
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
+
+  @@unique([provider, workspace])
+  @@map("tracker_connections")
+}
+
+model PhaseAuditLog {
+  id        String   @id @default(cuid())
+  projectId String   @map("project_id")
+  fromPhase Phase    @map("from_phase")
+  toPhase   Phase    @map("to_phase")
+  actorId   String   @map("actor_id")
+  at        DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  actor   Person  @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([projectId, at])
+  @@map("phase_audit_log")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  personId  String   @map("person_id")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@index([personId])
+  @@map("sessions")
+}
