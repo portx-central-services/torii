@@ -9,35 +9,64 @@ export function TrackersPage() {
     queryFn: () => endpoints.listTrackerConnections(),
   });
 
+  const connections = query.data ?? [];
+  const okCount = connections.filter((c) => c.status === 'ok').length;
+  const failedCount = connections.filter((c) => c.status === 'auth_failed').length;
+  const rateLimitedCount = connections.filter((c) => c.status === 'rate_limited').length;
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900">Trackers</h1>
-          <p className="text-sm text-gray-500">
+    <div className="page-stack">
+      <div className="page-header">
+        <div className="page-header-title">
+          <span className="overline">External integrations</span>
+          <h1>Trackers</h1>
+          <div className="page-sub">
             Connect external trackers to import projects and keep selected fields in sync.
-          </p>
+          </div>
         </div>
         <a className="btn-primary" href="/api/tracker/monday/connect">
           Connect Monday.com
         </a>
       </div>
 
+      <div className="kpi-row trackers-kpi-row">
+        <div className="kpi accent">
+          <div className="kpi-label">Connections</div>
+          <div className="kpi-value">{connections.length}</div>
+          <div className="kpi-sub">total configured</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">Healthy</div>
+          <div className="kpi-value kpi-success">{okCount}</div>
+          <div className="kpi-sub">status ok</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">Auth failed</div>
+          <div className="kpi-value kpi-danger">{failedCount}</div>
+          <div className="kpi-sub">needs reconnect</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">Rate limited</div>
+          <div className="kpi-value kpi-warning">{rateLimitedCount}</div>
+          <div className="kpi-sub">retry pending</div>
+        </div>
+      </div>
+
       {query.isLoading ? (
-        <div className="text-gray-500">Loading connections…</div>
+        <div className="empty">Loading connections...</div>
       ) : query.isError ? (
-        <div className="text-red-700">
-          Could not load tracker connections: {(query.error as Error).message}
+        <div className="empty text-red-700">
+          Unable to load tracker connections: {(query.error as Error).message}
         </div>
       ) : (query.data?.length ?? 0) === 0 ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center">
+        <div className="section-card empty">
           <div className="text-base text-gray-700 mb-2">No tracker connections yet</div>
           <div className="text-sm text-gray-500 mb-4">
-            Use “Connect Monday.com” to start an OAuth flow.
+            Use Connect Monday.com to start an OAuth flow.
           </div>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="trackers-list">
           {query.data!.map((c) => (
             <ConnectionCard key={c.id} connection={c} />
           ))}
@@ -63,16 +92,16 @@ function ConnectionCard({ connection }: { connection: TrackerConnection }) {
   });
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-      <div className="px-5 py-4 flex items-center justify-between border-b border-gray-200">
-        <div className="flex items-center gap-3">
+    <div className="section-card">
+      <div className="trackers-conn-head">
+        <div className="trackers-conn-id">
           <span className="badge bg-indigo-50 text-indigo-700">{connection.provider}</span>
           <div>
-            <div className="font-medium">{connection.workspace}</div>
-            <div className="text-xs text-gray-500">
+            <div className="trackers-conn-title">{connection.workspace}</div>
+            <div className="trackers-conn-sub">
               {connection.lastSyncedAt
-                ? `Last sync ${new Date(connection.lastSyncedAt).toLocaleString()}`
-                : 'Never synced'}
+                ? `Last Sync ${new Date(connection.lastSyncedAt).toLocaleString()}`
+                : 'Never Synced'}
             </div>
           </div>
         </div>
@@ -84,19 +113,19 @@ function ConnectionCard({ connection }: { connection: TrackerConnection }) {
             disabled={refreshMut.isPending}
             onClick={() => refreshMut.mutate()}
           >
-            {refreshMut.isPending ? 'Syncing…' : 'Sync now'}
+            {refreshMut.isPending ? 'Syncing...' : 'Sync Now'}
           </button>
         </div>
       </div>
 
       {connection.status === 'auth_failed' && (
-        <div className="px-5 py-3 bg-red-50 border-b border-red-200 text-sm text-red-800">
+        <div className="trackers-alert danger">
           The access token for this connection is invalid or revoked. Reconnect via the
-          “Connect Monday.com” button above.
+          Connect Monday.com button above.
         </div>
       )}
       {connection.status === 'rate_limited' && (
-        <div className="px-5 py-3 bg-amber-50 border-b border-amber-200 text-sm text-amber-900">
+        <div className="trackers-alert warning">
           Monday.com has rate-limited recent requests. Sync will retry automatically.
         </div>
       )}
@@ -130,14 +159,14 @@ function ImportPanel({ connectionId }: { connectionId: string }) {
   });
 
   return (
-    <div className="px-5 py-4">
+    <div className="trackers-import-panel">
       <div className="text-sm font-medium text-gray-800 mb-2">Import items</div>
       <p className="text-xs text-gray-500 mb-2">
         Paste Monday.com item ids (one per line, or comma-separated). Already-linked items
         will be skipped.
       </p>
       <textarea
-        className="input w-full font-mono text-xs"
+        className="input trackers-import-input"
         rows={3}
         placeholder="123456789&#10;987654321"
         value={raw}
@@ -165,7 +194,7 @@ function ImportPanel({ connectionId }: { connectionId: string }) {
             mutation.mutate();
           }}
         >
-          {mutation.isPending ? 'Importing…' : 'Import'}
+          {mutation.isPending ? 'Importing...' : 'Import'}
         </button>
       </div>
     </div>

@@ -11,7 +11,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   }, [state]);
 
   if (state === 'loading') {
-    return <div className="p-8 text-gray-500">Loading…</div>;
+    return <div className="p-8 text-gray-500">Loading...</div>;
   }
   if (state === 'unauthenticated') {
     return <Navigate to="/signin" replace state={{ from: location.pathname }} />;
@@ -21,11 +21,11 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 
 export function RequireAdmin({ children }: { children: ReactNode }) {
   const { state, user } = useAuth();
-  if (state === 'loading') return <div className="p-8 text-gray-500">Loading…</div>;
+  if (state === 'loading') return <div className="p-8 text-gray-500">Loading...</div>;
   if (state === 'unauthenticated') return <Navigate to="/signin" replace />;
   if (!user?.isAdmin) {
     return (
-      <div className="p-8 text-red-700">You don’t have permission to view this page.</div>
+      <div className="p-8 text-red-700">You do not have permission to view this page.</div>
     );
   }
   return <>{children}</>;

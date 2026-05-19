@@ -1,60 +1,95 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider.js';
 
 export function NavShell() {
   const { user, signOut } = useAuth();
+  const location = useLocation();
+
+  const crumbLabel =
+    location.pathname.startsWith('/projects/')
+      ? 'Project detail'
+      : location.pathname === '/capacity'
+        ? 'Team capacity'
+        : location.pathname === '/trackers'
+          ? 'Trackers'
+          : 'Projects';
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <div className="font-semibold text-lg text-torii">Torii</div>
-            <nav className="flex items-center gap-1">
-              <NavLink
-                to="/projects"
-                className={({ isActive }) =>
-                  `px-3 py-1.5 rounded text-sm ${isActive ? 'bg-torii-muted text-torii' : 'text-gray-700 hover:bg-gray-100'}`
-                }
-              >
-                Projects
-              </NavLink>
-              <NavLink
-                to="/capacity"
-                className={({ isActive }) =>
-                  `px-3 py-1.5 rounded text-sm ${isActive ? 'bg-torii-muted text-torii' : 'text-gray-700 hover:bg-gray-100'}`
-                }
-              >
-                Capacity
-              </NavLink>
-              {user?.isAdmin && (
-                <NavLink
-                  to="/trackers"
-                  className={({ isActive }) =>
-                    `px-3 py-1.5 rounded text-sm ${isActive ? 'bg-torii-muted text-torii' : 'text-gray-700 hover:bg-gray-100'}`
-                  }
-                >
-                  Trackers
-                </NavLink>
-              )}
-            </nav>
-          </div>
-          <div className="flex items-center gap-3">
-            {user && (
-              <div className="text-sm text-gray-600">
-                <span className="font-medium text-gray-800">{user.name}</span>
-                <span className="ml-2 badge bg-gray-100 text-gray-700">{user.role}</span>
-              </div>
-            )}
-            <button type="button" className="btn-secondary" onClick={signOut}>
-              Sign out
-            </button>
-          </div>
+    <div className="app-shell">
+      <aside className="app-sidebar">
+        <div className="sidebar-brand-wrap">
+          <div className="sidebar-brand">Torii</div>
+          <span className="sidebar-brand-suffix">Delivery</span>
         </div>
-      </header>
-      <main className="max-w-7xl mx-auto px-4 py-6">
-        <Outlet />
-      </main>
+
+        <div className="sidebar-section-label">Workspace</div>
+        <nav className="sidebar-nav">
+          <NavLink
+            to="/projects"
+            className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
+          >
+            Projects
+          </NavLink>
+          <NavLink
+            to="/capacity"
+            className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
+          >
+            Capacity
+          </NavLink>
+          {user?.isAdmin && (
+            <NavLink
+              to="/trackers"
+              className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
+            >
+              Trackers
+            </NavLink>
+          )}
+        </nav>
+
+        <div className="sidebar-foot">
+          <div className="sidebar-foot-avatar">
+            {(user?.name ?? 'UX')
+              .split(' ')
+              .slice(0, 2)
+              .map((p) => p[0])
+              .join('')
+              .toUpperCase()}
+          </div>
+          <div className="sidebar-foot-user">
+            <div className="sidebar-foot-name">{user?.name ?? 'UX Preview'}</div>
+            <div className="sidebar-foot-role">{user?.role ?? 'PM'}</div>
+          </div>
+          <button type="button" className="btn-ghost sidebar-signout" onClick={signOut}>
+            Sign out
+          </button>
+        </div>
+      </aside>
+
+      <section className="app-main">
+        <header className="topbar">
+          <div className="topbar-crumbs">
+            <span>Workspace</span>
+            <span className="crumb-sep">/</span>
+            <span className="crumb-current">{crumbLabel}</span>
+          </div>
+          <label className="topbar-search">
+            <span>Search</span>
+            <input placeholder="Projects, customers, people" />
+          </label>
+          <div className="topbar-actions">
+            <NavLink to="/projects" className="btn-secondary">
+              Portfolio
+            </NavLink>
+            <NavLink to="/projects" className="btn-primary">
+              New project
+            </NavLink>
+          </div>
+        </header>
+
+        <main className="page-content">
+          <Outlet />
+        </main>
+      </section>
     </div>
   );
 }

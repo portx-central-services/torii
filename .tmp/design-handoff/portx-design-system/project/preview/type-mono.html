@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Mono & numerics — JetBrains Mono</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { background: var(--paper); margin: 0; }
+  .wrap { padding: 22px 24px; display: flex; flex-direction: column; gap: 14px; }
+  .row { display: grid; grid-template-columns: 110px 1fr; gap: 16px; align-items: baseline; }
+  .meta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    white-space: nowrap;
+  }
+  .mono-lg { font-family: var(--font-mono); font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  .mono-md { font-family: var(--font-mono); font-size: 14px; }
+  .mono-sm { font-family: var(--font-mono); font-size: 12px; color: var(--fg-muted); }
+  .swatch-row { display: flex; gap: 12px; align-items: baseline; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="row"><span class="meta">Numeric · 22</span>
+      <div class="swatch-row">
+        <span class="mono-lg">$2,438,920.14</span>
+        <span class="mono-lg">87%</span>
+        <span class="mono-lg">PRJ-1042</span>
+      </div>
+    </div>
+    <div class="row"><span class="meta">Code · 14</span><code class="mono-md">GET /orca/v1/accounts/{id}</code></div>
+    <div class="row"><span class="meta">Tabular · 12</span>
+      <div class="mono-sm">
+        ACH-2026-05-14-00482 &nbsp; &middot; &nbsp; 832ms &nbsp; &middot; &nbsp; 200 OK
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -103,7 +103,7 @@
 
 ## 14. End-to-end verification (golden path)
 
-- [ ] 14.1 Local: bring up Postgres in Docker; run migrations; seed admin; start API + web
+- [x] 14.1 Local: bring up Postgres in Docker; run migrations; seed admin; start API + web
 - [ ] 14.2 Sign in as admin, create a project manually, assign two people to it with overlapping weeks, verify capacity view shows over-allocation
 - [ ] 14.3 Connect Monday.com (sandbox workspace), import an item, verify Torii-owned phase survives a sync, Monday-owned name updates on sync
 - [ ] 14.4 Confirm Viewer role cannot edit; PM can; sign-out invalidates session

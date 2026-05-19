@@ -3,6 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import { configureApiClient } from '../api/client.js';
 import { endpoints, type MeResponse } from '../api/endpoints.js';
 
+const authBypassEnabled =
+  import.meta.env.DEV &&
+  import.meta.env.MODE !== 'test' &&
+  import.meta.env.VITE_DISABLE_AUTH !== 'false';
+
+const BYPASS_USER: NonNullable<MeResponse['user']> = {
+  id: 'dev-auth-bypass',
+  email: 'ux-preview@local.dev',
+  name: 'UX Preview',
+  role: 'PM',
+  isAdmin: true,
+};
+
 interface AuthContextValue {
   state: 'loading' | 'authenticated' | 'unauthenticated';
   user: MeResponse['user'] | null;
@@ -14,10 +27,17 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
-  const [state, setState] = useState<AuthContextValue['state']>('loading');
-  const [user, setUser] = useState<AuthContextValue['user']>(null);
+  const [state, setState] = useState<AuthContextValue['state']>(
+    authBypassEnabled ? 'authenticated' : 'loading',
+  );
+  const [user, setUser] = useState<AuthContextValue['user']>(authBypassEnabled ? BYPASS_USER : null);
 
   useEffect(() => {
+    if (authBypassEnabled) {
+      configureApiClient({ onUnauthorized: () => undefined });
+      return;
+    }
+
     configureApiClient({
       onUnauthorized: () => {
         setState('unauthenticated');
@@ -31,6 +51,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const reload = useMemo(
     () => async () => {
+      if (authBypassEnabled) {
+        setUser(BYPASS_USER);
+        setState('authenticated');
+        return;
+      }
+
       try {
         const me = await endpoints.me();
         if (me.authenticated && me.user) {
@@ -50,6 +76,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useMemo(
     () => async () => {
+      if (authBypassEnabled) {
+        navigate('/projects', { replace: true });
+        return;
+      }
+
       await endpoints.signout().catch(() => undefined);
       setUser(null);
       setState('unauthenticated');

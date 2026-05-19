@@ -1,0 +1,309 @@
+/* =============================================================================
+   PortX Design System — Colors & Type Tokens
+   -----------------------------------------------------------------------------
+   Extracted from logo gradients, marketing site visual inspection, and the
+   product wordmarks (Integration Manager, Data Manager, Payment Manager, PiXi,
+   ORCA). Brand voice: technical, yet playful and professional. The anchor
+   visual motif is the cyan→mint gradient that draws the X in the PortX mark.
+   ============================================================================= */
+
+/* --- Webfonts (PortX brand fonts) -------------------------------------------
+   Display: Space Grotesk (variable wght)  — bold geometric character for
+            wordmarks, hero titles, and section headers.
+   Body:    Inter (variable opsz + wght)    — neutral UI face for body, table,
+            captions. opsz lets the same file scale crisply from 11pt captions
+            to 88px display.
+   Mono:    JetBrains Mono (Google CDN)     — no brand mono file was provided,
+            so we still load this from CDN. FLAGGED.
+   ---------------------------------------------------------------------------- */
+@font-face {
+  font-family: 'Inter';
+  src: url('fonts/Inter-VariableFont_opsz_wght.ttf') format('truetype-variations'),
+       url('fonts/Inter-VariableFont_opsz_wght.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('fonts/Inter-Italic-VariableFont_opsz_wght.ttf') format('truetype-variations'),
+       url('fonts/Inter-Italic-VariableFont_opsz_wght.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Space Grotesk';
+  src: url('fonts/SpaceGrotesk-VariableFont_wght.ttf') format('truetype-variations'),
+       url('fonts/SpaceGrotesk-VariableFont_wght.ttf') format('truetype');
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+/* JetBrains Mono — keep CDN until a brand mono is provided */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+:root {
+  /* =========================================================================
+     BRAND GRADIENTS — the signature PortX motif
+     ========================================================================= */
+  --portx-cyan: #00C9E4;          /* darker stop, X-glyph */
+  --portx-mint: #02E4A0;          /* lighter stop, X-glyph */
+  --portx-mint-light: #00DF99;    /* lighter wordmark variant */
+  --portx-aqua-pale: #89FFF8;     /* lighter wordmark variant terminus */
+
+  --portx-gradient: linear-gradient(135deg, var(--portx-cyan) 0%, var(--portx-mint) 100%);
+  --portx-gradient-vertical: linear-gradient(180deg, var(--portx-mint) 0%, var(--portx-cyan) 100%);
+  --portx-gradient-soft: linear-gradient(135deg, var(--portx-mint-light) 0%, var(--portx-aqua-pale) 100%);
+  --portx-gradient-radial: radial-gradient(circle at 30% 20%, var(--portx-mint) 0%, var(--portx-cyan) 60%, #0A2540 100%);
+
+  /* =========================================================================
+     CORE PALETTE
+     ========================================================================= */
+  /* Inks — true black for marks; ink-900 for body to soften slightly */
+  --ink-1000: #000000;
+  --ink-900:  #0F1419;
+  --ink-800:  #1C2230;
+  --ink-700:  #2A3340;
+  --ink-600:  #3D4757;
+  --ink-500:  #5B6675;
+  --ink-400:  #8A93A1;
+  --ink-300:  #B3BAC5;
+  --ink-200:  #D5DAE2;
+  --ink-100:  #E8ECF1;
+  --ink-50:   #F4F6F9;
+  --ink-25:   #FAFBFC;
+  --paper:    #FFFFFF;
+
+  /* Brand accents — built around the gradient stops */
+  --cyan-700:  #007E94;
+  --cyan-600:  #00A8C0;
+  --cyan-500:  #00C9E4;   /* primary */
+  --cyan-400:  #3FD8EA;
+  --cyan-200:  #A7EEF6;
+  --cyan-100:  #D6F7FB;
+  --cyan-50:   #ECFBFD;
+
+  --mint-700:  #017A56;
+  --mint-600:  #02B07C;
+  --mint-500:  #02E4A0;   /* primary */
+  --mint-400:  #3DECB6;
+  --mint-200:  #A8F5DA;
+  --mint-100:  #D5FAEC;
+  --mint-50:   #ECFCF5;
+
+  /* Deep "banking" navy — used sparingly for serious surfaces & dark mode */
+  --navy-900:  #0A1628;
+  --navy-800:  #0F2540;
+  --navy-700:  #15355A;
+
+  /* =========================================================================
+     SEMANTIC COLORS
+     ========================================================================= */
+  /* Foreground */
+  --fg-default:    var(--ink-900);
+  --fg-muted:      var(--ink-600);
+  --fg-subtle:     var(--ink-400);
+  --fg-disabled:   var(--ink-300);
+  --fg-onBrand:    var(--ink-1000);
+  --fg-onDark:     var(--paper);
+  --fg-link:       var(--cyan-700);
+  --fg-accent:     var(--mint-700);
+
+  /* Background */
+  --bg-canvas:     var(--paper);
+  --bg-subtle:     var(--ink-25);
+  --bg-muted:      var(--ink-50);
+  --bg-hover:      var(--ink-100);
+  --bg-inverse:    var(--ink-1000);
+  --bg-brand-soft: var(--mint-50);
+  --bg-brand:      var(--portx-gradient);
+
+  /* Borders */
+  --border-default: var(--ink-200);
+  --border-strong:  var(--ink-300);
+  --border-subtle:  var(--ink-100);
+  --border-focus:   var(--cyan-500);
+
+  /* Status — designed to live alongside the cyan/mint without clashing */
+  --status-success: #02B07C;
+  --status-success-bg: #ECFCF5;
+  --status-warning: #F5A524;
+  --status-warning-bg: #FFF6E6;
+  --status-danger:  #E5484D;
+  --status-danger-bg: #FEEBEC;
+  --status-info:    var(--cyan-600);
+  --status-info-bg: var(--cyan-50);
+
+  /* =========================================================================
+     TYPOGRAPHY
+     ========================================================================= */
+  --font-display: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-body:    'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Type scale (rem assumes 16px root) */
+  --fs-display-xl: 88px; --lh-display-xl: 0.98; --ls-display-xl: -0.04em;
+  --fs-display-lg: 64px; --lh-display-lg: 1.02; --ls-display-lg: -0.035em;
+  --fs-display-md: 48px; --lh-display-md: 1.06; --ls-display-md: -0.03em;
+  --fs-display-sm: 36px; --lh-display-sm: 1.12; --ls-display-sm: -0.025em;
+
+  --fs-h1: 32px; --lh-h1: 1.18; --ls-h1: -0.02em;
+  --fs-h2: 24px; --lh-h2: 1.25; --ls-h2: -0.015em;
+  --fs-h3: 20px; --lh-h3: 1.3;  --ls-h3: -0.01em;
+  --fs-h4: 17px; --lh-h4: 1.35; --ls-h4: -0.005em;
+
+  --fs-body-lg: 18px; --lh-body-lg: 1.55;
+  --fs-body:    16px; --lh-body:    1.55;
+  --fs-body-sm: 14px; --lh-body-sm: 1.5;
+  --fs-caption: 12px; --lh-caption: 1.45;
+  --fs-overline:11px; --lh-overline:1.4; --ls-overline:0.12em;
+
+  --fs-mono-sm: 13px;
+  --fs-mono:    14px;
+
+  --fw-light: 300;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --fw-extrabold: 800;
+
+  /* =========================================================================
+     SPACING + RADII + SHADOWS + MOTION
+     ========================================================================= */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+  --space-32: 128px;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-2xl: 28px;
+  --radius-pill: 999px;
+
+  /* Subtle, banking-grade shadows — never colored, never blown out */
+  --shadow-xs: 0 1px 2px rgba(15, 20, 25, 0.06);
+  --shadow-sm: 0 1px 3px rgba(15, 20, 25, 0.08), 0 1px 2px rgba(15, 20, 25, 0.04);
+  --shadow-md: 0 4px 12px rgba(15, 20, 25, 0.08), 0 2px 4px rgba(15, 20, 25, 0.04);
+  --shadow-lg: 0 12px 32px rgba(15, 20, 25, 0.10), 0 4px 8px rgba(15, 20, 25, 0.04);
+  --shadow-xl: 0 24px 56px rgba(15, 20, 25, 0.14), 0 8px 16px rgba(15, 20, 25, 0.06);
+  /* Brand glow — for hero CTAs and the gradient X mark */
+  --shadow-brand: 0 12px 40px rgba(2, 228, 160, 0.25), 0 4px 12px rgba(0, 201, 228, 0.18);
+  --shadow-focus: 0 0 0 3px rgba(0, 201, 228, 0.35);
+
+  /* Motion — restrained, banking software, never bouncy */
+  --ease-out:   cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out:cubic-bezier(0.65, 0, 0.35, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+}
+
+/* ===========================================================================
+   SEMANTIC ELEMENT DEFAULTS — drop colors_and_type.css onto a page and headings,
+   body copy, links, code automatically inherit the system.
+   =========================================================================== */
+html, body {
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--fg-default);
+  background: var(--bg-canvas);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, .h1 {
+  font-family: var(--font-display);
+  font-weight: var(--fw-extrabold);
+  font-size: var(--fs-h1);
+  line-height: var(--lh-h1);
+  letter-spacing: var(--ls-h1);
+  color: var(--fg-default);
+  margin: 0;
+}
+h2, .h2 {
+  font-family: var(--font-display);
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-h2);
+  line-height: var(--lh-h2);
+  letter-spacing: var(--ls-h2);
+  margin: 0;
+}
+h3, .h3 {
+  font-family: var(--font-display);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-h3);
+  line-height: var(--lh-h3);
+  letter-spacing: var(--ls-h3);
+  margin: 0;
+}
+h4, .h4 {
+  font-family: var(--font-display);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-h4);
+  line-height: var(--lh-h4);
+  margin: 0;
+}
+
+.display-xl { font: var(--fw-extrabold) var(--fs-display-xl)/var(--lh-display-xl) var(--font-display); letter-spacing: var(--ls-display-xl); }
+.display-lg { font: var(--fw-extrabold) var(--fs-display-lg)/var(--lh-display-lg) var(--font-display); letter-spacing: var(--ls-display-lg); }
+.display-md { font: var(--fw-bold)      var(--fs-display-md)/var(--lh-display-md) var(--font-display); letter-spacing: var(--ls-display-md); }
+.display-sm { font: var(--fw-bold)      var(--fs-display-sm)/var(--lh-display-sm) var(--font-display); letter-spacing: var(--ls-display-sm); }
+
+p, .body { font-size: var(--fs-body); line-height: var(--lh-body); color: var(--fg-default); margin: 0 0 1em; text-wrap: pretty; }
+.body-lg { font-size: var(--fs-body-lg); line-height: var(--lh-body-lg); }
+.body-sm { font-size: var(--fs-body-sm); line-height: var(--lh-body-sm); }
+.caption  { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--fg-muted); }
+.overline {
+  font-size: var(--fs-overline);
+  line-height: var(--lh-overline);
+  letter-spacing: var(--ls-overline);
+  text-transform: uppercase;
+  font-weight: var(--fw-semibold);
+  color: var(--fg-muted);
+}
+
+a {
+  color: var(--fg-link);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in oklab, var(--fg-link) 30%, transparent);
+  transition: color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+}
+a:hover { color: var(--cyan-600); border-bottom-color: currentColor; }
+
+code, kbd, pre, .mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+}
+code {
+  background: var(--ink-50);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  padding: 1px 6px;
+}
+
+::selection { background: color-mix(in oklab, var(--mint-500) 30%, transparent); }
+
+/* Utility: the canonical PortX gradient text/fill */
+.brand-gradient-text {
+  background: var(--portx-gradient);
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+}
+.brand-gradient-fill { background: var(--portx-gradient); }

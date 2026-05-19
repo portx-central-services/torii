@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Body — Inter</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { background: var(--paper); margin: 0; }
+  .wrap { padding: 22px 24px; display: flex; flex-direction: column; gap: 14px; max-width: 700px; }
+  .row { display: grid; grid-template-columns: 110px 1fr; gap: 16px; align-items: baseline; }
+  .meta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    white-space: nowrap;
+  }
+  p { margin: 0; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="row"><span class="meta">Body LG · 18</span><p class="body-lg">PortX gives banks a single, governed view of every customer interaction.</p></div>
+    <div class="row"><span class="meta">Body · 16</span><p>Integration isn't the end goal. It's the power supply that makes new fintech connections lightning fast and future-proof.</p></div>
+    <div class="row"><span class="meta">Body SM · 14</span><p class="body-sm">Reusable, standards-based APIs aligned with ISO 20022, CUFX, and FDX.</p></div>
+    <div class="row"><span class="meta">Caption · 12</span><p class="caption">Last updated 2 hours ago by Sarah Chen</p></div>
+    <div class="row"><span class="meta">Overline · 11</span><span class="overline">Delivery Portfolio</span></div>
+  </div>
+</body>
+</html>

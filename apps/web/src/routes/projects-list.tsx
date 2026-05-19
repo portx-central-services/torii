@@ -40,6 +40,19 @@ export function ProjectsListPage() {
       }),
   });
 
+  const projects = query.data ?? [];
+  const now = Date.now();
+  const ms60d = 60 * 24 * 60 * 60 * 1000;
+  const onTrack = projects.filter((p) => p.state === 'OnTrack').length;
+  const atRisk = projects.filter((p) => p.state === 'AtRisk').length;
+  const blocked = projects.filter((p) => p.state === 'Blocked').length;
+  const goingLiveSoon = projects.filter((p) => {
+    const target = p.keyDates.target_go_live;
+    if (!target) return false;
+    const ts = new Date(target).getTime();
+    return ts >= now && ts - now <= ms60d;
+  }).length;
+
   const columns = useMemo(
     () => [
       columnHelper.accessor('name', {
@@ -64,7 +77,7 @@ export function ProjectsListPage() {
       }),
       columnHelper.accessor((p) => p.keyDates.target_go_live ?? null, {
         id: 'target_go_live',
-        header: 'Target go-live',
+        header: 'Target Go-Live',
         cell: (ctx) => ctx.getValue() ?? <span className="text-gray-400">—</span>,
         sortingFn: (a, b) => {
           const av = a.original.keyDates.target_go_live ?? '';
@@ -87,7 +100,7 @@ export function ProjectsListPage() {
   );
 
   const table = useReactTable({
-    data: query.data ?? [],
+    data: projects,
     columns,
     state: { sorting },
     onSortingChange: setSorting,
@@ -96,9 +109,45 @@ export function ProjectsListPage() {
   });
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-end justify-between gap-3">
-        <div className="flex items-end gap-3">
+    <div className="page-stack">
+      <div className="page-header">
+        <div className="page-header-title">
+          <span className="overline">Delivery Portfolio</span>
+          <h1>Projects</h1>
+          <div className="page-sub">{projects.length} active projects</div>
+        </div>
+      </div>
+
+      <div className="kpi-row">
+        <div className="kpi accent">
+          <div className="kpi-label">Active</div>
+          <div className="kpi-value">{projects.length}</div>
+          <div className="kpi-sub">current portfolio</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">On track</div>
+          <div className="kpi-value kpi-success">{onTrack}</div>
+          <div className="kpi-sub">state OnTrack</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">At risk</div>
+          <div className="kpi-value kpi-warning">{atRisk}</div>
+          <div className="kpi-sub">state AtRisk</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">Blocked</div>
+          <div className="kpi-value kpi-danger">{blocked}</div>
+          <div className="kpi-sub">state Blocked</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">Go-Live ≤ 60d</div>
+          <div className="kpi-value">{goingLiveSoon}</div>
+          <div className="kpi-sub">Target Go-Live window</div>
+        </div>
+      </div>
+
+      <div className="filter-row">
+        <div className="filter-fields">
           <div className="flex flex-col">
             <label className="text-xs text-gray-600 mb-1">Phase</label>
             <select
@@ -150,28 +199,24 @@ export function ProjectsListPage() {
         )}
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <div className="card">
         {query.isLoading ? (
-          <div className="p-8 text-center text-gray-500">Loading projects…</div>
+          <div className="p-8 text-center text-gray-500">Loading projects...</div>
         ) : query.isError ? (
           <div className="p-8 text-center text-red-700">
-            Could not load projects: {(query.error as Error).message}
+            Unable to load projects: {(query.error as Error).message}
           </div>
         ) : (query.data?.length ?? 0) === 0 ? (
           <EmptyState onCreate={isPM ? () => setCreateOpen(true) : undefined} />
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-600">
+          <table className="tbl">
+            <thead>
               {table.getHeaderGroups().map((hg) => (
                 <tr key={hg.id}>
                   {hg.headers.map((header) => (
-                    <th
-                      key={header.id}
-                      className="px-4 py-2 cursor-pointer select-none"
-                      onClick={header.column.getToggleSortingHandler()}
-                    >
+                    <th key={header.id} onClick={header.column.getToggleSortingHandler()}>
                       {flexRender(header.column.columnDef.header, header.getContext())}
-                      <span className="ml-1 text-gray-400">
+                      <span className="ml-1 text-gray-400" aria-hidden="true">
                         {{ asc: '▲', desc: '▼' }[header.column.getIsSorted() as string] ?? ''}
                       </span>
                     </th>
@@ -179,11 +224,11 @@ export function ProjectsListPage() {
                 </tr>
               ))}
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody>
               {table.getRowModel().rows.map((row) => (
-                <tr key={row.id} className="hover:bg-gray-50">
+                <tr key={row.id}>
                   {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="px-4 py-2">
+                    <td key={cell.id}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </td>
                   ))}
@@ -204,7 +249,7 @@ export function ProjectsListPage() {
 
 function EmptyState({ onCreate }: { onCreate?: () => void }) {
   return (
-    <div className="p-12 text-center">
+    <div className="empty">
       <div className="text-base text-gray-700 mb-2">No projects yet</div>
       <div className="text-sm text-gray-500 mb-4">
         Import from a tracker or create one manually.
@@ -250,7 +295,7 @@ function CreateProjectModal({
       reset();
       onClose();
     },
-    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Failed to create'),
+    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Unable to create project.'),
   });
 
   function reset() {
@@ -323,7 +368,7 @@ function CreateProjectModal({
               onChange={(e) => setKickoff(e.target.value)}
             />
           </Field>
-          <Field label="Target go-live">
+          <Field label="Target Go-Live">
             <input
               type="date"
               className="input w-full"
@@ -342,7 +387,7 @@ function CreateProjectModal({
             Cancel
           </button>
           <button type="submit" className="btn-primary" disabled={mutation.isPending}>
-            {mutation.isPending ? 'Creating…' : 'Create'}
+            {mutation.isPending ? 'Creating...' : 'Create'}
           </button>
         </div>
       </form>

@@ -33,13 +33,13 @@ export function AllocationsPanel({
   const peopleById = new Map((peopleQuery.data ?? []).map((p) => [p.id, p]));
 
   return (
-    <section className="bg-white rounded-lg shadow-sm border border-gray-200">
-      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
-        <h2 className="font-semibold text-gray-800">Allocations</h2>
+    <section className="section-card">
+      <div className="section-card-head">
+        <h3>Team allocations</h3>
         {canEdit && (
           <button
             type="button"
-            className="btn-secondary text-xs"
+            className="btn-secondary"
             onClick={() => setShowAdd((v) => !v)}
           >
             {showAdd ? 'Cancel' : 'Add allocation'}
@@ -58,24 +58,24 @@ export function AllocationsPanel({
       )}
 
       {allocations.length === 0 ? (
-        <div className="p-6 text-sm text-gray-500 text-center">No allocations yet</div>
+        <div className="empty">No allocations yet</div>
       ) : (
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-600">
+        <table className="tbl">
+          <thead>
             <tr>
-              <th className="px-4 py-2">Person</th>
-              <th className="px-4 py-2">%</th>
-              <th className="px-4 py-2">Start</th>
-              <th className="px-4 py-2">End</th>
-              {canEdit && <th className="px-4 py-2 w-px" />}
+              <th>Person</th>
+              <th>%</th>
+              <th>Start</th>
+              <th>End</th>
+              {canEdit && <th className="w-px" />}
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody>
             {allocations.map((a) => {
               const person = peopleById.get(a.personId);
               return (
-                <tr key={a.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-2">
+                <tr key={a.id}>
+                  <td>
                     {person ? (
                       <span>
                         {person.name}{' '}
@@ -85,11 +85,11 @@ export function AllocationsPanel({
                       a.personId
                     )}
                   </td>
-                  <td className="px-4 py-2 font-mono">{a.pct}%</td>
-                  <td className="px-4 py-2">{a.start}</td>
-                  <td className="px-4 py-2">{a.end}</td>
+                  <td className="mono">{a.pct}%</td>
+                  <td>{a.start}</td>
+                  <td>{a.end}</td>
                   {canEdit && (
-                    <td className="px-4 py-2">
+                    <td>
                       <button
                         type="button"
                         className="text-xs text-red-700 hover:underline"
@@ -139,12 +139,12 @@ function AddAllocationForm({
         end,
       }),
     onSuccess: () => onSubmitted(),
-    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Failed'),
+    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Unable to create allocation.'),
   });
 
   return (
     <form
-      className="p-4 bg-gray-50 grid grid-cols-5 gap-2 border-b border-gray-200"
+      className="detail-settings-grid mb-4"
       onSubmit={(e) => {
         e.preventDefault();
         setErr(null);
@@ -152,12 +152,12 @@ function AddAllocationForm({
       }}
     >
       <select
-        className="input col-span-2"
+        className="input"
         value={personId}
         onChange={(e) => setPersonId(e.target.value)}
         required
       >
-        <option value="">Select person…</option>
+        <option value="">Select person...</option>
         {(peopleQuery.data ?? []).map((p) => (
           <option key={p.id} value={p.id}>
             {p.name}
@@ -188,13 +188,13 @@ function AddAllocationForm({
         required
       />
       {err && (
-        <div className="col-span-5 text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+        <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2" style={{ gridColumn: '1 / -1' }}>
           {err}
         </div>
       )}
-      <div className="col-span-5 flex justify-end">
-        <button type="submit" className="btn-primary text-sm" disabled={mutation.isPending}>
-          {mutation.isPending ? 'Adding…' : 'Add allocation'}
+      <div className="detail-form-actions" style={{ gridColumn: '1 / -1' }}>
+        <button type="submit" className="btn-primary" disabled={mutation.isPending}>
+          {mutation.isPending ? 'Adding...' : 'Add allocation'}
         </button>
       </div>
     </form>

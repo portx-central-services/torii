@@ -1,8 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { isoWeekStart, isoDateUtc } from '@torii/shared';
-import { endpoints, type CapacityRollup } from '../api/endpoints.js';
+import { endpoints } from '../api/endpoints.js';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -13,235 +12,338 @@ function defaultRange(): { from: string; to: string } {
   return { from: isoDateUtc(fromUtc), to: isoDateUtc(toUtc) };
 }
 
-function demandClass(pct: number): string {
-  if (pct === 0) return 'bg-white';
-  if (pct < 50) return 'bg-emerald-50';
-  if (pct < 100) return 'bg-emerald-100';
-  if (pct < 150) return 'bg-amber-100';
-  if (pct < 200) return 'bg-orange-200';
-  return 'bg-red-300';
+type CapacityStatus = 'healthy' | 'low' | 'high' | 'over' | 'bench';
+type RoleBucket = 'PM' | 'SA' | 'SC';
+
+function capacityStatus(pct: number): CapacityStatus {
+  if (pct === 0) return 'bench';
+  if (pct < 50) return 'low';
+  if (pct < 85) return 'healthy';
+  if (pct < 100) return 'high';
+  return 'over';
+}
+
+function roleClass(role: string | undefined): RoleBucket {
+  if (role === 'PM') return 'PM';
+  if (role === 'SA') return 'SA';
+  if (role === 'Viewer') return 'SC';
+  return 'SC';
 }
 
 export function CapacityPage() {
   const initial = defaultRange();
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
-  const [drillWeek, setDrillWeek] = useState<string | null>(null);
+  const [weekStart, setWeekStart] = useState<string | null>(null);
+  const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
+  const [roleFilter, setRoleFilter] = useState<'all' | 'PM' | 'SA' | 'SC'>('all');
+  const [sortBy, setSortBy] = useState<'alloc' | 'name' | 'role'>('alloc');
 
-  const query = useQuery({
+  const rollupQuery = useQuery({
     queryKey: ['capacity', from, to],
     queryFn: () => endpoints.capacityRollup(from, to),
   });
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900">Capacity</h1>
-          <p className="text-sm text-gray-500">
-            Weekly demand across projects and per-person commitment.
-          </p>
-        </div>
-        <div className="flex items-end gap-2">
-          <label className="flex flex-col">
-            <span className="text-xs text-gray-600 mb-1">From</span>
-            <input
-              type="date"
-              className="input"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-            />
-          </label>
-          <label className="flex flex-col">
-            <span className="text-xs text-gray-600 mb-1">To</span>
-            <input
-              type="date"
-              className="input"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-            />
-          </label>
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => {
-              const r = defaultRange();
-              setFrom(r.from);
-              setTo(r.to);
-            }}
-          >
-            Reset (12 weeks)
-          </button>
-        </div>
-      </div>
+  const peopleQuery = useQuery({
+    queryKey: ['people'],
+    queryFn: () => endpoints.listPeople(),
+  });
 
-      {query.isLoading ? (
-        <div className="p-8 text-gray-500">Loading capacity…</div>
-      ) : query.isError ? (
-        <div className="p-8 text-red-700">
-          Could not load capacity: {(query.error as Error).message}
-        </div>
-      ) : (
-        <HeatmapAndDrill
-          data={query.data!}
-          drillWeek={drillWeek}
-          onDrill={setDrillWeek}
-        />
-      )}
-    </div>
-  );
-}
+  const weeks = rollupQuery.data?.weeks ?? [];
 
-function HeatmapAndDrill({
-  data,
-  drillWeek,
-  onDrill,
-}: {
-  data: CapacityRollup;
-  drillWeek: string | null;
-  onDrill: (w: string | null) => void;
-}) {
-  // Build project rows: union of project ids across all weeks.
-  const projects = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const w of data.weeks) {
-      for (const p of w.projects) map.set(p.projectId, p.projectName);
+  useEffect(() => {
+    if (!weekStart) {
+      const firstWeek = weeks.at(0);
+      if (firstWeek) setWeekStart(firstWeek.weekStart);
     }
-    return Array.from(map.entries())
-      .map(([id, name]) => ({ id, name }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [data]);
+  }, [weekStart, weeks]);
 
-  if (data.weeks.length === 0) {
-    return <div className="p-8 text-gray-500">No weeks in range.</div>;
-  }
+  const selectedWeek = weeks.find((w) => w.weekStart === weekStart) ?? weeks[0];
 
-  return (
-    <div className="grid grid-cols-3 gap-6">
-      <div className="col-span-2 bg-white rounded-lg shadow-sm border border-gray-200 overflow-auto">
-        {projects.length === 0 ? (
-          <div className="p-8 text-gray-500 text-center">
-            No allocations in this date range.
-          </div>
-        ) : (
-          <table className="text-xs">
-            <thead className="sticky top-0 bg-gray-50">
-              <tr>
-                <th className="px-3 py-2 text-left font-medium text-gray-600 sticky left-0 bg-gray-50">
-                  Project
-                </th>
-                {data.weeks.map((w) => (
-                  <th
-                    key={w.weekStart}
-                    className={`px-2 py-2 text-center font-medium cursor-pointer hover:bg-gray-100 ${
-                      drillWeek === w.weekStart ? 'bg-torii-muted text-torii' : 'text-gray-600'
-                    }`}
-                    onClick={() => onDrill(drillWeek === w.weekStart ? null : w.weekStart)}
-                  >
-                    {w.weekStart.slice(5)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {projects.map((proj) => (
-                <tr key={proj.id} className="border-t border-gray-100">
-                  <td className="px-3 py-2 sticky left-0 bg-white">
-                    <Link
-                      to={`/projects/${proj.id}`}
-                      className="text-torii hover:underline"
-                    >
-                      {proj.name}
-                    </Link>
-                  </td>
-                  {data.weeks.map((w) => {
-                    const entry = w.projects.find((p) => p.projectId === proj.id);
-                    const pct = entry?.demandPct ?? 0;
-                    return (
-                      <td
-                        key={w.weekStart}
-                        className={`px-2 py-2 text-center font-mono ${demandClass(pct)}`}
-                        title={`${proj.name}: ${pct}% for week of ${w.weekStart}`}
-                      >
-                        {pct > 0 ? `${pct}%` : ''}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      <DrillDownPanel data={data} drillWeek={drillWeek} onClear={() => onDrill(null)} />
-    </div>
+  const peopleById = useMemo(
+    () => new Map((peopleQuery.data ?? []).map((p) => [p.id, p])),
+    [peopleQuery.data],
   );
-}
 
-function DrillDownPanel({
-  data,
-  drillWeek,
-  onClear,
-}: {
-  data: CapacityRollup;
-  drillWeek: string | null;
-  onClear: () => void;
-}) {
-  if (!drillWeek) {
-    return (
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 text-sm text-gray-500">
-        Click a week column to see per-person commitment.
-      </div>
-    );
-  }
-  const week = data.weeks.find((w) => w.weekStart === drillWeek);
-  if (!week) return null;
+  const teamRows = useMemo(() => {
+    const rows = (selectedWeek?.people ?? []).map((p) => {
+      const person = peopleById.get(p.personId);
+      const role: RoleBucket = roleClass(person?.role);
+      return {
+        ...p,
+        role,
+        status: capacityStatus(p.committedPct),
+      };
+    });
+
+    const filtered =
+      roleFilter === 'all' ? rows : rows.filter((r) => r.role === roleFilter);
+
+    if (sortBy === 'name') {
+      filtered.sort((a, b) => a.personName.localeCompare(b.personName));
+    } else if (sortBy === 'role') {
+      filtered.sort((a, b) => a.role.localeCompare(b.role) || b.committedPct - a.committedPct);
+    } else {
+      filtered.sort((a, b) => b.committedPct - a.committedPct);
+    }
+
+    return filtered;
+  }, [peopleById, roleFilter, selectedWeek?.people, sortBy]);
+
+  useEffect(() => {
+    if (!selectedPersonId && teamRows.length > 0) {
+      const firstPerson = teamRows.at(0);
+      if (firstPerson) setSelectedPersonId(firstPerson.personId);
+    }
+  }, [selectedPersonId, teamRows]);
+
+  const selectedPerson = teamRows.find((p) => p.personId === selectedPersonId) ?? null;
+
+  const allocationsQuery = useQuery({
+    queryKey: ['person-allocations', selectedPersonId, selectedWeek?.weekStart, selectedWeek?.weekEnd],
+    queryFn: () =>
+      endpoints.personAllocations(
+        selectedPersonId!,
+        selectedWeek!.weekStart,
+        selectedWeek!.weekEnd,
+      ),
+    enabled: !!selectedPersonId && !!selectedWeek,
+  });
+
+  const summary = useMemo(() => {
+    const rows = selectedWeek?.people ?? [];
+    const count = rows.length;
+    if (count === 0) {
+      return {
+        avg: 0,
+        over: 0,
+        high: 0,
+        lowAndBench: 0,
+        byRole: { PM: 0, SA: 0, SC: 0 },
+      };
+    }
+
+    const avg = Math.round(rows.reduce((acc, p) => acc + p.committedPct, 0) / count);
+    const over = rows.filter((p) => p.committedPct >= 100).length;
+    const high = rows.filter((p) => p.committedPct >= 85 && p.committedPct < 100).length;
+    const lowAndBench = rows.filter((p) => p.committedPct < 50).length;
+
+    const byRole: Record<RoleBucket, number> = { PM: 0, SA: 0, SC: 0 };
+    for (const p of rows) {
+      const role: RoleBucket = roleClass(peopleById.get(p.personId)?.role);
+      byRole[role] += 1;
+    }
+
+    return { avg, over, high, lowAndBench, byRole };
+  }, [peopleById, selectedWeek?.people]);
+
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
-        <div>
-          <div className="text-xs text-gray-500 uppercase">Week of</div>
-          <div className="font-semibold">{week.weekStart}</div>
+    <div className="page-stack">
+      <div className="page-header">
+        <div className="page-header-title">
+          <span className="overline">Delivery Team</span>
+          <h1>Team Capacity</h1>
+          <div className="page-sub">
+            {selectedWeek ? `Week of ${selectedWeek.weekStart}` : 'Choose a week to drill into'}
+          </div>
         </div>
-        <button type="button" className="btn-ghost text-sm" onClick={onClear}>
-          Close
-        </button>
       </div>
-      {week.people.length === 0 ? (
-        <div className="p-5 text-sm text-gray-500">No commitments this week.</div>
+
+      <div className="kpi-row">
+        <div className="kpi accent">
+          <div className="kpi-label">Avg allocation</div>
+          <div className="kpi-value">{summary.avg}%</div>
+          <div className="kpi-sub">across current week</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">Over-allocated</div>
+          <div className="kpi-value kpi-danger">{summary.over}</div>
+          <div className="kpi-sub">people at 100%+</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">High utilization</div>
+          <div className="kpi-value kpi-warning">{summary.high}</div>
+          <div className="kpi-sub">between 85% and 99%</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">Low / bench</div>
+          <div className="kpi-value">{summary.lowAndBench}</div>
+          <div className="kpi-sub">below 50%</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">Roles</div>
+          <div className="kpi-role-line">
+            <span>{summary.byRole.PM} PM</span>
+            <span>{summary.byRole.SA} SA</span>
+            <span>{summary.byRole.SC} SC</span>
+          </div>
+          <div className="kpi-sub">project, architecture, consulting</div>
+        </div>
+      </div>
+
+      <div className="filter-row">
+        <div className="filter-fields">
+          <label className="field-wrap">
+            <span className="field-label">From</span>
+            <input type="date" className="input" value={from} onChange={(e) => setFrom(e.target.value)} />
+          </label>
+          <label className="field-wrap">
+            <span className="field-label">To</span>
+            <input type="date" className="input" value={to} onChange={(e) => setTo(e.target.value)} />
+          </label>
+          <label className="field-wrap">
+            <span className="field-label">Week</span>
+            <select
+              className="input"
+              value={selectedWeek?.weekStart ?? ''}
+              onChange={(e) => setWeekStart(e.target.value)}
+            >
+              {weeks.map((w) => (
+                <option key={w.weekStart} value={w.weekStart}>
+                  {w.weekStart}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="segmented">
+          {(['all', 'PM', 'SA', 'SC'] as const).map((role) => (
+            <button
+              key={role}
+              type="button"
+              className={roleFilter === role ? 'on' : ''}
+              onClick={() => setRoleFilter(role)}
+            >
+              {role === 'all' ? 'All roles' : role}
+            </button>
+          ))}
+        </div>
+
+        <div className="segmented">
+          {(
+            [
+              { key: 'alloc', label: 'Allocation' },
+              { key: 'name', label: 'Name' },
+              { key: 'role', label: 'Role' },
+            ] as const
+          ).map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              className={sortBy === opt.key ? 'on' : ''}
+              onClick={() => setSortBy(opt.key)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {rollupQuery.isLoading ? (
+        <div className="empty">Loading capacity...</div>
+      ) : rollupQuery.isError ? (
+        <div className="empty text-red-700">Unable to load capacity: {(rollupQuery.error as Error).message}</div>
       ) : (
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 text-xs uppercase text-gray-600">
-            <tr>
-              <th className="px-4 py-2 text-left">Person</th>
-              <th className="px-4 py-2 text-right">Committed</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {week.people.map((p) => (
-              <tr
-                key={p.personId}
-                className={p.overAllocated ? 'bg-red-50' : ''}
-                title={
-                  p.overAllocated
-                    ? `${p.committedPct}% exceeds default capacity of ${p.defaultCapacityPct}%`
-                    : ''
-                }
-              >
-                <td className="px-4 py-2">
-                  <span className="font-medium">{p.personName}</span>
-                  {p.overAllocated && (
-                    <span className="ml-2 badge bg-red-100 text-red-700">Over</span>
-                  )}
-                </td>
-                <td className="px-4 py-2 text-right font-mono">
-                  {p.committedPct}% / {p.defaultCapacityPct}%
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="capacity-grid">
+          <div className="card">
+            {teamRows.map((person) => {
+              const width = Math.min(person.committedPct, 120);
+              return (
+                <div
+                  key={person.personId}
+                  className={`cap-row ${selectedPersonId === person.personId ? 'selected' : ''}`}
+                  onClick={() => setSelectedPersonId(person.personId)}
+                >
+                  <div className="cap-person-col">
+                    <div className="avatar-sm-round">{person.personName.split(' ').map((v) => v[0]).join('').slice(0, 2)}</div>
+                    <div className="cap-person-meta">
+                      <span className="cap-person-name">{person.personName}</span>
+                      <span className={`role-pill ${person.role}`}>{person.role}</span>
+                    </div>
+                  </div>
+                  <div className="cap-bar-wrap">
+                    <div className={`cap-bar cap-status-${person.status}`}>
+                      <span style={{ width: `${width}%` }} />
+                      <span className="marker-100" />
+                    </div>
+                  </div>
+                  <div className={`cap-pct ${person.status}`}>{person.committedPct}%</div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="drilldown">
+            {!selectedPerson ? (
+              <div className="drilldown-empty">Select a person to view week details.</div>
+            ) : (
+              <>
+                <div className="drilldown-head">
+                  <div className="avatar-lg-round">
+                    {selectedPerson.personName.split(' ').map((v) => v[0]).join('').slice(0, 2)}
+                  </div>
+                  <div>
+                    <div className="drilldown-name">{selectedPerson.personName}</div>
+                    <div className="drilldown-role">
+                      <span className={`role-pill ${selectedPerson.role}`}>{selectedPerson.role}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="drilldown-stats">
+                  <div className="drilldown-stat">
+                    <div className="drilldown-stat-label">Committed</div>
+                    <div className="drilldown-stat-value">{selectedPerson.committedPct}%</div>
+                  </div>
+                  <div className="drilldown-stat">
+                    <div className="drilldown-stat-label">Default capacity</div>
+                    <div className="drilldown-stat-value">{selectedPerson.defaultCapacityPct}%</div>
+                  </div>
+                </div>
+
+                <div className="overline">Allocation breakdown</div>
+
+                {allocationsQuery.isLoading ? (
+                  <div className="mt-3 text-sm text-gray-500">Loading allocations...</div>
+                ) : allocationsQuery.isError ? (
+                  <div className="mt-3 text-sm text-red-700">
+                    Unable to load allocations: {(allocationsQuery.error as Error).message}
+                  </div>
+                ) : (allocationsQuery.data?.length ?? 0) === 0 ? (
+                  <div className="mt-3 text-sm text-gray-500">No allocations in the selected week.</div>
+                ) : (
+                  <>
+                    <div className="alloc-bar-stacked">
+                      {allocationsQuery.data!.map((a, i) => (
+                        <div
+                          key={a.id}
+                          style={{
+                            width: `${Math.min(a.pct, 100)}%`,
+                            background: `hsl(${(i * 67) % 360} 72% 52%)`,
+                          }}
+                          title={`${a.project.name}: ${a.pct}%`}
+                        />
+                      ))}
+                    </div>
+                    <div className="alloc-list">
+                      {allocationsQuery.data!.map((a, i) => (
+                        <div key={a.id} className="alloc-row">
+                          <span
+                            className="alloc-dot"
+                            style={{ background: `hsl(${(i * 67) % 360} 72% 52%)` }}
+                          />
+                          <span className="alloc-name">{a.project.name}</span>
+                          <span className="alloc-pct">{a.pct}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

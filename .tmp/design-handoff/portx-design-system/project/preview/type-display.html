@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Display type — Space Grotesk</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { background: var(--paper); margin: 0; }
+  .wrap { padding: 22px 24px; display: flex; flex-direction: column; gap: 14px; }
+  .row { display: flex; align-items: baseline; gap: 18px; }
+  .meta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    white-space: nowrap;
+    min-width: 110px;
+  }
+  .specimen { color: var(--fg-default); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="row">
+      <span class="meta">Display · 64 / 800</span>
+      <span class="specimen display-lg">Banking, lit up.</span>
+    </div>
+    <div class="row">
+      <span class="meta">Display · 48 / 700</span>
+      <span class="specimen display-md">If your data had a voice.</span>
+    </div>
+    <div class="row">
+      <span class="meta">Display · 36 / 700</span>
+      <span class="specimen display-sm">One platform, every rail.</span>
+    </div>
+  </div>
+</body>
+</html>
