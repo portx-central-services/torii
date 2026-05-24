@@ -38,6 +38,18 @@ export interface Project {
   updatedAt: string;
 }
 
+export interface MondayItemSnapshot {
+  id?: string;
+  name?: string;
+  column_values?: Array<{
+    id: string;
+    type?: string;
+    text?: string | null;
+    value?: string | null;
+    column?: { id?: string; title?: string };
+  }>;
+}
+
 export interface ProjectDetail extends Project {
   allocations: Array<{
     id: string;
@@ -48,6 +60,7 @@ export interface ProjectDetail extends Project {
     end: string;
   }>;
   lastSyncedAt: string | null;
+  trackerRaw: MondayItemSnapshot | null;
 }
 
 export interface Person {
@@ -122,13 +135,23 @@ export const endpoints = {
     api.get<CapacityRollup>('/api/capacity/rollup', { from, to }),
 
   listTrackerConnections: () => api.get<TrackerConnection[]>('/api/tracker/connections'),
-  refreshTrackerConnection: (id: string) =>
-    api.post<{ status: string }>(`/api/tracker/connections/${id}/refresh`),
-  importTrackerItems: (id: string, externalIds: string[]) =>
-    api.post<{ created: Array<{ id: string; externalId: string }>; skipped: string[] }>(
-      `/api/tracker/connections/${id}/import`,
-      { externalIds },
-    ),
+  refreshTrackerConnection: (id: string, opts: { force?: boolean } = {}) =>
+    api.post<{
+      status: string;
+      error?: string;
+      projectsScanned: number;
+      projectsPatched: number;
+    }>(`/api/tracker/connections/${id}/refresh`, opts),
+  importTrackerItems: (
+    id: string,
+    externalIds: string[],
+    opts: { overwrite?: boolean } = {},
+  ) =>
+    api.post<{
+      created: Array<{ id: string; externalId: string }>;
+      updated?: Array<{ id: string; externalId: string }>;
+      skipped: string[];
+    }>(`/api/tracker/connections/${id}/import`, { externalIds, ...opts }),
   refreshProject: (id: string) =>
     api.post<{ status: string; projectsPatched: number }>(`/api/tracker/projects/${id}/refresh`),
 };

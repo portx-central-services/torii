@@ -33,7 +33,11 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   const db = opts.db ?? getPrisma();
 
   await app.register(cookie, { secret: opts.env.SESSION_SECRET });
-  registerSessionHook(app, { db, cookieName: opts.env.SESSION_COOKIE_NAME });
+  registerSessionHook(app, {
+    db,
+    cookieName: opts.env.SESSION_COOKIE_NAME,
+    enablePreviewAdminBypass: opts.env.NODE_ENV !== 'production',
+  });
 
   await registerAuthRoutes(app, { db, env: opts.env });
   registerProjectRoutes(app, { db });

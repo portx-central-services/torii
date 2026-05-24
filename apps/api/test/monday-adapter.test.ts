@@ -111,6 +111,124 @@ describe('MondayAdapter', () => {
     expect(items[0]!.targetGoLive).toBe('2026-10-15');
   });
 
+  it('prefers the project column value over item name when present', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      mkResponse(200, {
+        data: {
+          boards: [
+            {
+              id: '1',
+              name: 'B',
+              items_page: {
+                items: [
+                  {
+                    id: '1',
+                    name: 'Fallback Item Name',
+                    column_values: [
+                      {
+                        id: 'project',
+                        type: 'text',
+                        text: 'Imported Monday Project Name',
+                        value: '"Imported Monday Project Name"',
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    const adapter = new MondayAdapter({
+      workspace: 'w',
+      accessToken: 'tok',
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+
+    const items = await adapter.listProjects();
+    expect(items[0]!.name).toBe('Imported Monday Project Name');
+  });
+
+  it('uses generated project-name style ids and JSON string column values', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      mkResponse(200, {
+        data: {
+          boards: [
+            {
+              id: '1',
+              name: 'B',
+              items_page: {
+                items: [
+                  {
+                    id: '1',
+                    name: 'Fallback Item Name',
+                    column_values: [
+                      {
+                        id: 'text_project_name_ab12cd34',
+                        type: 'text',
+                        text: '',
+                        value: '"Project Name From JSON"',
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    const adapter = new MondayAdapter({
+      workspace: 'w',
+      accessToken: 'tok',
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+
+    const items = await adapter.listProjects();
+    expect(items[0]!.name).toBe('Project Name From JSON');
+  });
+
+  it('uses column title Project Name when id is opaque', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      mkResponse(200, {
+        data: {
+          boards: [
+            {
+              id: '1',
+              name: 'B',
+              items_page: {
+                items: [
+                  {
+                    id: '1',
+                    name: 'Fallback Item Name',
+                    column_values: [
+                      {
+                        id: 'text_mks8w3nq',
+                        column: { id: 'text_mks8w3nq', title: 'Project Name' },
+                        type: 'text',
+                        text: 'Project Name From Column Title',
+                        value: '"Project Name From Column Title"',
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    const adapter = new MondayAdapter({
+      workspace: 'w',
+      accessToken: 'tok',
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+
+    const items = await adapter.listProjects();
+    expect(items[0]!.name).toBe('Project Name From Column Title');
+  });
+
   it('throws MondayAuthError on 401', async () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response('nope', { status: 401 }));
     const adapter = new MondayAdapter({
@@ -145,6 +263,90 @@ describe('MondayAdapter', () => {
       fetchFn: fetchFn as unknown as typeof fetch,
     });
     await expect(adapter.listProjects()).rejects.toBeInstanceOf(MondayRateLimitError);
+  });
+
+  it('retries listProjects with a minimal query on unauthorized field/type', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mkResponse(200, {
+          errors: [
+            {
+              message: 'Unauthorized field or type',
+              extensions: { code: 'UserUnauthorizedException' },
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        mkResponse(200, {
+          data: {
+            boards: [
+              {
+                id: '1',
+                name: 'Board A',
+                items_page: {
+                  items: [{ id: '101', name: 'Acme integration' }],
+                },
+              },
+            ],
+          },
+        }),
+      );
+    const adapter = new MondayAdapter({
+      workspace: 'w',
+      accessToken: 'tok',
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+
+    const items = await adapter.listProjects();
+
+    expect(items).toEqual([
+      {
+        externalId: '101',
+        name: 'Acme integration',
+        targetGoLive: undefined,
+        raw: expect.any(Object),
+      },
+    ]);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries getProject with a minimal query on unauthorized field/type', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mkResponse(200, {
+          errors: [
+            {
+              message: 'Unauthorized field or type',
+              extensions: { code: 'UserUnauthorizedException' },
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        mkResponse(200, {
+          data: {
+            items: [{ id: '101', name: 'Acme integration' }],
+          },
+        }),
+      );
+    const adapter = new MondayAdapter({
+      workspace: 'w',
+      accessToken: 'tok',
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+
+    const item = await adapter.getProject('101');
+
+    expect(item).toEqual({
+      externalId: '101',
+      name: 'Acme integration',
+      targetGoLive: undefined,
+      raw: expect.any(Object),
+    });
+    expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
   it('getProject returns null when the item is not found', async () => {

@@ -8,6 +8,9 @@ const authBypassEnabled =
   import.meta.env.MODE !== 'test' &&
   import.meta.env.VITE_DISABLE_AUTH !== 'false';
 
+const PREVIEW_ADMIN_COOKIE = 'torii_preview_admin';
+const PREVIEW_ADMIN_COOKIE_VALUE = '1';
+
 const BYPASS_USER: NonNullable<MeResponse['user']> = {
   id: 'dev-auth-bypass',
   email: 'ux-preview@local.dev',
@@ -34,9 +37,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (authBypassEnabled) {
+      // Dev-only bridge so API routes can treat UX preview as an authenticated admin.
+      document.cookie = `${PREVIEW_ADMIN_COOKIE}=${PREVIEW_ADMIN_COOKIE_VALUE}; Path=/; SameSite=Lax`;
       configureApiClient({ onUnauthorized: () => undefined });
       return;
     }
+
+    document.cookie = `${PREVIEW_ADMIN_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
 
     configureApiClient({
       onUnauthorized: () => {
@@ -77,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useMemo(
     () => async () => {
       if (authBypassEnabled) {
+        document.cookie = `${PREVIEW_ADMIN_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
         navigate('/projects', { replace: true });
         return;
       }

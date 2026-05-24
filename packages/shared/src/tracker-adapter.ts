@@ -19,10 +19,29 @@ export interface TrackerMetadata {
   };
 }
 
+export interface TrackerAccessProbe {
+  name: string;
+  ok: boolean;
+  detail?: string;
+  error?: string;
+}
+
+export interface TrackerAccessCheck {
+  ok: boolean;
+  identity?: {
+    id?: string;
+    name?: string;
+    email?: string;
+    account?: { id?: string; name?: string; slug?: string };
+  };
+  probes: TrackerAccessProbe[];
+}
+
 export interface TrackerAdapter {
   listProjects(): Promise<ExternalProject[]>;
   getProject(externalId: string): Promise<ExternalProject | null>;
   getMetadata(): Promise<TrackerMetadata>;
+  verifyAccess(): Promise<TrackerAccessCheck>;
 }
 
 /** Per-field ownership. The string keys are field names, possibly dotted. */

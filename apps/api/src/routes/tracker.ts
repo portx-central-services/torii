@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { TrackerProvider } from '@prisma/client';
+import { Prisma, TrackerProvider } from '@prisma/client';
 import {
   ForbiddenError,
   NotFoundError,
@@ -10,17 +10,21 @@ import {
 import type { DB } from '../db.js';
 import type { Env } from '../env.js';
 import { requireAdmin, requirePM, requireUser } from '../plugins/guards.js';
-import { encryptToken } from '../sync/encryption.js';
+import { decryptToken, encryptToken } from '../sync/encryption.js';
 import type { SyncEngine } from '../sync/engine.js';
+import { getAdapterFactory } from '../sync/registry.js';
+import type { ExternalProject } from '@torii/shared';
 
 const MONDAY_AUTHORIZE_URL = 'https://auth.monday.com/oauth2/authorize';
 const MONDAY_TOKEN_URL = 'https://auth.monday.com/oauth2/token';
 const OAUTH_STATE_COOKIE = 'torii_monday_oauth';
+const MONDAY_OAUTH_SCOPE = 'boards:read me:read';
 
 const idParams = z.object({ id: z.string().min(1) });
 
 const importBody = z.object({
   externalIds: z.array(z.string().min(1)).min(1),
+  overwrite: z.boolean().optional(),
 });
 
 interface MondayTokenResponse {
@@ -34,6 +38,20 @@ interface RegisterTrackerOptions {
   db: DB;
   env: Env;
   engine: SyncEngine;
+}
+
+function assertMondayConfig(env: Env): void {
+  if (!env.MONDAY_CLIENT_ID || !env.MONDAY_CLIENT_SECRET || !env.MONDAY_REDIRECT_URI) {
+    throw new ForbiddenError('Monday.com is not configured');
+  }
+  if (!env.TRACKER_TOKEN_KEY) {
+    throw new ForbiddenError(
+      'TRACKER_TOKEN_KEY is required for Monday token encryption. Generate one with: openssl rand -hex 32',
+    );
+  }
+  if (!/^[0-9a-fA-F]{64}$/.test(env.TRACKER_TOKEN_KEY)) {
+    throw new ForbiddenError('TRACKER_TOKEN_KEY must be 64 hex characters (32 bytes)');
+  }
 }
 
 export function registerTrackerRoutes(
@@ -67,9 +85,7 @@ export function registerTrackerRoutes(
 
   app.get('/api/tracker/monday/connect', async (request, reply) => {
     requireAdmin(request);
-    if (!env.MONDAY_CLIENT_ID || !env.MONDAY_CLIENT_SECRET || !env.MONDAY_REDIRECT_URI) {
-      throw new ForbiddenError('Monday.com is not configured');
-    }
+    assertMondayConfig(env);
     const state = crypto.randomUUID();
     reply.setCookie(OAUTH_STATE_COOKIE, state, {
       httpOnly: true,
@@ -83,11 +99,13 @@ export function registerTrackerRoutes(
     url.searchParams.set('client_id', env.MONDAY_CLIENT_ID);
     url.searchParams.set('redirect_uri', env.MONDAY_REDIRECT_URI);
     url.searchParams.set('state', state);
+    url.searchParams.set('scope', MONDAY_OAUTH_SCOPE);
     reply.redirect(url.toString());
   });
 
   app.get('/api/tracker/monday/callback', async (request, reply) => {
     requireAdmin(request);
+    assertMondayConfig(env);
     const q = z
       .object({
         code: z.string().min(1),
@@ -150,9 +168,11 @@ export function registerTrackerRoutes(
   app.post('/api/tracker/connections/:id/refresh', async (request) => {
     requirePM(request);
     const { id } = idParams.parse(request.params);
+    const rawBody = request.body && typeof request.body === 'object' ? request.body : {};
+    const { force } = z.object({ force: z.boolean().optional() }).parse(rawBody);
     const conn = await db.trackerConnection.findUnique({ where: { id } });
     if (!conn) throw new NotFoundError('TrackerConnection not found');
-    const result = await engine.syncConnection(id);
+    const result = await engine.syncConnection(id, { force });
     return result;
   });
 
@@ -171,41 +191,125 @@ export function registerTrackerRoutes(
   app.post('/api/tracker/connections/:id/import', async (request) => {
     requirePM(request);
     const { id } = idParams.parse(request.params);
-    const { externalIds } = importBody.parse(request.body);
+    const { externalIds, overwrite = false } = importBody.parse(request.body);
     const conn = await db.trackerConnection.findUnique({ where: { id } });
     if (!conn) throw new NotFoundError('TrackerConnection not found');
 
     const created: Array<{ id: string; externalId: string }> = [];
+    const updated: Array<{ id: string; externalId: string }> = [];
     const skipped: string[] = [];
+    const placeholdered: string[] = [];
+
+    const accessToken = decryptToken(conn.accessTokenEnc, env.TRACKER_TOKEN_KEY);
+    const adapter = getAdapterFactory(conn.provider)({
+      workspace: conn.workspace,
+      accessToken,
+    });
+
+    const existingProjects = await db.project.findMany({
+      where: { trackerRef: { not: Prisma.JsonNull } },
+    });
 
     for (const externalId of externalIds) {
-      // Has a project already been linked for this provider+externalId?
-      const existingProjects = await db.project.findMany({
-        where: {},
-      });
       const matching = existingProjects.find((p) => {
         const ref = p.trackerRef as { provider?: string; externalId?: string } | null;
         return ref?.provider === conn.provider && ref?.externalId === externalId;
       });
-      if (matching) {
+      if (matching && !overwrite) {
         skipped.push(externalId);
         continue;
       }
-      const project = await db.project.create({
-        data: {
-          name: `Monday item ${externalId}`,
-          trackerRef: { provider: conn.provider, externalId },
-          fieldMapping: DEFAULT_FIELD_MAPPING,
-        },
-      });
-      created.push({ id: project.id, externalId });
+
+      let external: ExternalProject | null = null;
+      try {
+        external = await adapter.getProject(externalId);
+        if (!external) {
+          app.log.warn(
+            { connectionId: id, externalId, provider: conn.provider },
+            'Tracker import: adapter returned no project; using placeholder name',
+          );
+        }
+      } catch (err) {
+        app.log.error(
+          {
+            err,
+            connectionId: id,
+            externalId,
+            provider: conn.provider,
+          },
+          'Tracker import: failed to fetch external project; using placeholder name',
+        );
+      }
+
+      const name = external?.name ?? `Monday item ${externalId}`;
+      const newKeyDateFields: Record<string, string> = {};
+      if (external?.targetGoLive) newKeyDateFields.target_go_live = external.targetGoLive;
+      if (!external?.name) placeholdered.push(externalId);
+
+      const trackerRawValue = (external?.raw ?? Prisma.JsonNull) as Prisma.InputJsonValue;
+
+      if (matching) {
+        const mergedKeyDates = {
+          ...((matching.keyDates as Record<string, string | undefined>) ?? {}),
+          ...newKeyDateFields,
+        };
+        const project = await db.project.update({
+          where: { id: matching.id },
+          data: {
+            name,
+            keyDates: mergedKeyDates,
+            trackerRaw: trackerRawValue,
+          },
+        });
+        updated.push({ id: project.id, externalId });
+      } else {
+        const project = await db.project.create({
+          data: {
+            name,
+            trackerRef: { provider: conn.provider, externalId },
+            fieldMapping: DEFAULT_FIELD_MAPPING,
+            trackerRaw: trackerRawValue,
+            ...(Object.keys(newKeyDateFields).length > 0 ? { keyDates: newKeyDateFields } : {}),
+          },
+        });
+        created.push({ id: project.id, externalId });
+      }
     }
 
-    // Now run a per-project sync for the newly created ones to pull the real name etc.
-    for (const c of created) {
-      await engine.syncProject(c.id).catch(() => undefined);
-    }
+    app.log.info(
+      {
+        connectionId: id,
+        overwrite,
+        importedRequested: externalIds.length,
+        importedCreated: created.length,
+        importedUpdated: updated.length,
+        importedSkipped: skipped.length,
+        importedPlaceholdered: placeholdered.length,
+        placeholderedExternalIds: placeholdered,
+      },
+      'Tracker import summary',
+    );
 
-    return { created, skipped };
+    return { created, updated, skipped };
+  });
+
+  app.post('/api/tracker/connections/:id/test', async (request) => {
+    requirePM(request);
+    const { id } = idParams.parse(request.params);
+    const conn = await db.trackerConnection.findUnique({ where: { id } });
+    if (!conn) throw new NotFoundError('TrackerConnection not found');
+
+    const accessToken = decryptToken(conn.accessTokenEnc, env.TRACKER_TOKEN_KEY);
+    const adapter = getAdapterFactory(conn.provider)({
+      workspace: conn.workspace,
+      accessToken,
+    });
+
+    const result = await adapter.verifyAccess();
+    app.log.info(
+      { connectionId: id, provider: conn.provider, ok: result.ok, probes: result.probes },
+      'Tracker connection test',
+    );
+    return { connectionId: id, provider: conn.provider, ...result };
   });
 }

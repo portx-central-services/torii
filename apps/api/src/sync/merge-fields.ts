@@ -39,6 +39,7 @@ export function mergeExternalIntoTorii(
   // name
   if (external.name !== undefined && lookup('name') !== 'torii') {
     if (external.name !== existing.name) {
+      // patch.name = external.name;
       patch.name = external.name;
     }
   }

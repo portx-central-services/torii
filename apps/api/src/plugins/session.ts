@@ -7,6 +7,7 @@ export const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
 export interface SessionHookOptions {
   db: DB;
   cookieName: string;
+  enablePreviewAdminBypass?: boolean;
 }
 
 export function registerSessionHook(app: FastifyInstance, opts: SessionHookOptions): void {
@@ -42,6 +43,21 @@ export function registerSessionHook(app: FastifyInstance, opts: SessionHookOptio
       isAdmin: session.person.isAdmin,
     };
     request.user = user;
+
+    return;
+  });
+
+  app.addHook('onRequest', async (request) => {
+    if (!opts.enablePreviewAdminBypass || request.user) return;
+    if (request.cookies.torii_preview_admin !== '1') return;
+
+    request.user = {
+      id: 'dev-preview-admin',
+      email: 'ux-preview@local.dev',
+      name: 'UX Preview',
+      role: 'PM',
+      isAdmin: true,
+    };
   });
 }
 

@@ -68,6 +68,8 @@ model Project {
   ownerId       String?      @map("owner_id")
   // { provider, externalId } or null
   trackerRef    Json?        @map("tracker_ref")
+  // Last-synced raw payload from the tracker (e.g., Monday item + column_values). Null until first sync.
+  trackerRaw    Json?        @map("tracker_raw")
   // { fieldName: "torii" | "monday" } - per-field ownership
   fieldMapping  Json         @default("{}") @map("field_mapping")
   createdAt     DateTime     @default(now()) @map("created_at")

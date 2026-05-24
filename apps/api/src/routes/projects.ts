@@ -92,6 +92,7 @@ export function registerProjectRoutes(
         end: a.end.toISOString().slice(0, 10),
       })),
       lastSyncedAt,
+      trackerRaw: project.trackerRaw ?? null,
     };
   });
 

@@ -1,6 +1,7 @@
-## Purpose
+# sso-auth Specification
 
-Defines the application-wide OIDC authentication session: how the OIDC AuthProvider is wired into the React tree, how tokens are stored and renewed, the `useAuth()` and `<RequireAuth>` consumer surface, the `authedFetch` helper, sign-out behavior, environment-derived configuration, and the localhost-specific dev-server and token-endpoint plumbing required to make the realm's redirect/origin allowlists work.
+## Purpose
+TBD - created by archiving change add-integration-dashboard. Update Purpose after archive.
 ## Requirements
 ### Requirement: App is wrapped in an OIDC AuthProvider
 The application SHALL be wrapped at its root layout in an OIDC AuthProvider that handles PKCE sign-in, redirect-callback code exchange, silent token renewal, and exposes auth state via a `useAuth()` hook to client components.
@@ -217,3 +218,4 @@ The TokenSync recovery state machine SHALL behave identically on `localhost` and
 - **WHEN** an `auth.error` or `silentRenewError` occurs on `localhost`
 - **THEN** the same recovery action SHALL fire as on a deployed origin
 - **AND** the same `<SigninShell>` UI SHALL render
+

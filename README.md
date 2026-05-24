@@ -58,6 +58,8 @@ GOOGLE_REDIRECT_URI=http://localhost:3001/api/auth/google/callback
 
 First sign-in auto-provisions the user as a `Viewer`. The seeded admin (from `ADMIN_EMAIL`) is a `PM` with `is_admin=true`.
 
+Development note: when frontend auth bypass is enabled (the default in local dev unless `VITE_DISABLE_AUTH=false`), UX preview mode runs with admin privileges for end-to-end UI/API testing. This bypass is not enabled in production.
+
 ## Monday.com integration
 
 See [docs/field-ownership.md](docs/field-ownership.md) for how Torii and Monday.com share fields per project.
@@ -67,6 +69,16 @@ See [docs/field-ownership.md](docs/field-ownership.md) for how Torii and Monday.
 3. Sign in as admin and click **Trackers → Connect Monday.com**.
 4. In the connection card, paste item ids to import.
 5. Enable the 30-minute scheduled sync with `ENABLE_SYNC_CRON=true`.
+
+### Troubleshooting
+
+If a tracker connection shows `Unauthorized field or type` during sync:
+
+1. Verify your Monday OAuth app has read access needed for boards/items queried by Torii.
+2. Verify the connected Monday user can open the target boards/items in Monday UI.
+3. Reconnect with **Trackers -> Connect Monday.com** after updating app scopes or user access.
+
+This error usually means OAuth succeeded but the token/user lacks permissions for one or more queried schema fields/types.
 
 ## Scripts
 

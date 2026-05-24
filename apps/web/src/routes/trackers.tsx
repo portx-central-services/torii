@@ -85,10 +85,23 @@ function statusBadge(status: TrackerConnection['status']) {
 
 function ConnectionCard({ connection }: { connection: TrackerConnection }) {
   const queryClient = useQueryClient();
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   const refreshMut = useMutation({
-    mutationFn: () => endpoints.refreshTrackerConnection(connection.id),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['tracker-connections'] }),
+    mutationFn: () => endpoints.refreshTrackerConnection(connection.id, { force: true }),
+    onSuccess: (data) => {
+      if (data.status !== 'ok') {
+        setRefreshError(data.error ?? `Sync failed with status: ${data.status}`);
+        return;
+      }
+      setRefreshError(null);
+    },
+    onError: (e) =>
+      setRefreshError(e instanceof ApiError ? e.message : (e as Error).message),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['tracker-connections'] });
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+    },
   });
 
   return (
@@ -122,6 +135,11 @@ function ConnectionCard({ connection }: { connection: TrackerConnection }) {
         <div className="trackers-alert danger">
           The access token for this connection is invalid or revoked. Reconnect via the
           Connect Monday.com button above.
+        </div>
+      )}
+      {refreshError && (
+        <div className="trackers-alert danger">
+          Last sync error: {refreshError}
         </div>
       )}
       {connection.status === 'rate_limited' && (

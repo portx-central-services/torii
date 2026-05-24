@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PHASES, PROJECT_STATES, type Phase, type ProjectState } from '@torii/shared';
-import { endpoints, type ProjectDetail } from '../api/endpoints.js';
+import { endpoints, type MondayItemSnapshot, type ProjectDetail } from '../api/endpoints.js';
 import { PhaseBadge, StateBadge } from '../components/Badge.js';
 import { useIsPM } from '../auth/AuthProvider.js';
 import { ApiError } from '../api/client.js';
@@ -187,6 +187,10 @@ export function ProjectDetailPage() {
 
       <AllocationsPanel projectId={project.id} canEdit={isPM} />
 
+      {project.trackerRef && (
+        <MondayDetailsPanel trackerRaw={project.trackerRaw} />
+      )}
+
       <button
         type="button"
         className="hidden"
@@ -349,6 +353,81 @@ function KV({ label, value }: { label: string; value: ReactNode }) {
       <div className="detail-kv-label">{label}</div>
       <div className="detail-kv-value">{value}</div>
     </div>
+  );
+}
+
+function MondayDetailsPanel({ trackerRaw }: { trackerRaw: MondayItemSnapshot | null }) {
+  const [showRaw, setShowRaw] = useState(false);
+
+  if (!trackerRaw) {
+    return (
+      <section className="section-card">
+        <div className="section-card-head">
+          <h3>Monday details</h3>
+        </div>
+        <div className="text-sm text-gray-500">
+          No snapshot yet. Click Sync from tracker to fetch the latest item data.
+        </div>
+      </section>
+    );
+  }
+
+  const columns = trackerRaw.column_values ?? [];
+  const populated = columns.filter((c) => (c.text ?? '').trim().length > 0);
+
+  return (
+    <section className="section-card">
+      <div className="section-card-head">
+        <h3>Monday details</h3>
+        <button
+          type="button"
+          className="btn-secondary text-xs"
+          onClick={() => setShowRaw((v) => !v)}
+        >
+          {showRaw ? 'Hide raw JSON' : 'Show raw JSON'}
+        </button>
+      </div>
+      <div className="detail-side-list">
+        <div className="detail-side-item">
+          <span className="detail-side-label">Monday item id</span>
+          <span className="detail-side-value mono">{trackerRaw.id ?? '—'}</span>
+        </div>
+        <div className="detail-side-item">
+          <span className="detail-side-label">Row title</span>
+          <span className="detail-side-value">{trackerRaw.name ?? '—'}</span>
+        </div>
+      </div>
+      {populated.length > 0 ? (
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Column</th>
+              <th>Value</th>
+              <th>Type</th>
+            </tr>
+          </thead>
+          <tbody>
+            {populated.map((c) => (
+              <tr key={c.id}>
+                <td>{c.column?.title ?? c.id}</td>
+                <td>{c.text}</td>
+                <td className="text-xs text-gray-500">{c.type ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <div className="text-sm text-gray-500 mt-2">No populated columns on this item.</div>
+      )}
+      {showRaw && (
+        <pre
+          className="mono text-xs mt-3 p-3 rounded bg-gray-50 border border-gray-200"
+          style={{ maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+        >
+          {JSON.stringify(trackerRaw, null, 2)}
+        </pre>
+      )}
+    </section>
   );
 }
 

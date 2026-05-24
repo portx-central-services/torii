@@ -1,6 +1,6 @@
 import { Prisma, TrackerConnectionStatus } from '@prisma/client';
 import type { TrackerConnection } from '@prisma/client';
-import type { TrackerAdapter, TrackerProvider } from '@torii/shared';
+import type { ExternalProject, TrackerAdapter, TrackerProvider } from '@torii/shared';
 import type { DB } from '../db.js';
 import { decryptToken } from './encryption.js';
 import { getAdapterFactory } from './registry.js';
@@ -42,13 +42,26 @@ function trackerRefMatches(
 export class SyncEngine {
   constructor(private readonly opts: SyncEngineOptions) {}
 
-  /** Sync every linked project for the given connection. */
-  async syncConnection(connectionId: string): Promise<SyncResult> {
+  /**
+   * Sync every linked project for the given connection.
+   *
+   * When `opts.force` is true, refetch each linked project individually via
+   * `adapter.getProject(externalId)` so items missed by `listProjects` pagination
+   * still get refreshed. The cron tick keeps the default (bulk) path.
+   */
+  async syncConnection(
+    connectionId: string,
+    opts: { force?: boolean } = {},
+  ): Promise<SyncResult> {
     const { db } = this.opts;
     const connection = await db.trackerConnection.findUnique({ where: { id: connectionId } });
     if (!connection) throw new Error(`TrackerConnection ${connectionId} not found`);
 
     return this.runSync(connection, async (adapter) => {
+      if (opts.force) {
+        return this.forceRefreshLinked(adapter, connection.provider, connectionId);
+      }
+
       const externals = await adapter.listProjects();
 
       // Load all projects linked to a tracker; filter by provider+externalId in memory.
@@ -70,19 +83,77 @@ export class SyncEngine {
         const fieldMapping =
           (project.fieldMapping as Record<string, 'torii' | 'monday'> | null) ?? null;
         const patch = mergeExternalIntoTorii(existing, external, fieldMapping);
-        if (Object.keys(patch).length === 0) continue;
 
         await db.project.update({
           where: { id: project.id },
           data: {
+            trackerRaw: (external.raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
             ...(patch.name !== undefined ? { name: patch.name } : {}),
             ...(patch.keyDates !== undefined ? { keyDates: patch.keyDates } : {}),
           },
         });
-        patched += 1;
+        if (Object.keys(patch).length > 0) patched += 1;
       }
       return { scanned: externals.length, patched };
     });
+  }
+
+  private async forceRefreshLinked(
+    adapter: TrackerAdapter,
+    provider: TrackerProvider,
+    connectionId: string,
+  ): Promise<{ scanned: number; patched: number }> {
+    const { db } = this.opts;
+    const linkedProjects = await db.project.findMany({
+      where: { trackerRef: { not: Prisma.JsonNull } },
+    });
+    const ourProjects = linkedProjects.filter((p) => {
+      const ref = p.trackerRef as { provider?: string; externalId?: string } | null;
+      return ref?.provider === provider && typeof ref.externalId === 'string';
+    });
+
+    let scanned = 0;
+    let patched = 0;
+    for (const project of ourProjects) {
+      const ref = project.trackerRef as { externalId: string };
+      let external: ExternalProject | null;
+      try {
+        external = await adapter.getProject(ref.externalId);
+      } catch (err) {
+        // Auth/rate-limit failures are connection-level — rethrow so the
+        // outer runSync marks the connection appropriately.
+        if (err instanceof MondayAuthError || err instanceof MondayRateLimitError) throw err;
+        // Per-item errors: log and continue so other items still sync.
+        console.error('[SyncEngine.forceRefreshLinked]', {
+          connectionId,
+          projectId: project.id,
+          externalId: ref.externalId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+        continue;
+      }
+      if (!external) continue;
+      scanned += 1;
+
+      const existing: ExistingProjectSlice = {
+        name: project.name,
+        keyDates: (project.keyDates as Record<string, string | undefined>) ?? {},
+      };
+      const fieldMapping =
+        (project.fieldMapping as Record<string, 'torii' | 'monday'> | null) ?? null;
+      const patch = mergeExternalIntoTorii(existing, external, fieldMapping);
+
+      await db.project.update({
+        where: { id: project.id },
+        data: {
+          trackerRaw: (external.raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          ...(patch.name !== undefined ? { name: patch.name } : {}),
+          ...(patch.keyDates !== undefined ? { keyDates: patch.keyDates } : {}),
+        },
+      });
+      if (Object.keys(patch).length > 0) patched += 1;
+    }
+    return { scanned, patched };
   }
 
   /** Sync one Torii project against its linked tracker item. */
@@ -117,16 +188,16 @@ export class SyncEngine {
       const fieldMapping =
         (project.fieldMapping as Record<string, 'torii' | 'monday'> | null) ?? null;
       const patch = mergeExternalIntoTorii(existing, external, fieldMapping);
-      if (Object.keys(patch).length === 0) return { scanned: 1, patched: 0 };
 
       await db.project.update({
         where: { id: project.id },
         data: {
+          trackerRaw: (external.raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
           ...(patch.name !== undefined ? { name: patch.name } : {}),
           ...(patch.keyDates !== undefined ? { keyDates: patch.keyDates } : {}),
         },
       });
-      return { scanned: 1, patched: 1 };
+      return { scanned: 1, patched: Object.keys(patch).length > 0 ? 1 : 0 };
     });
   }
 

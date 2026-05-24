@@ -69,6 +69,22 @@ describe('projects routes', () => {
       });
     });
 
+    it('list response omits trackerRaw even when stored', async () => {
+      userRef.current = viewerUser;
+      db.project.findMany.mockResolvedValue([
+        {
+          ...baseProject(),
+          trackerRef: { provider: 'monday', externalId: '101' },
+          trackerRaw: { id: '101', name: 'Acme', column_values: [] },
+        },
+      ]);
+      const r = await app.inject({ method: 'GET', url: '/api/projects' });
+      expect(r.statusCode).toBe(200);
+      const rows = r.json() as Array<Record<string, unknown>>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).not.toHaveProperty('trackerRaw');
+    });
+
     it('passes phase and state filters through to Prisma', async () => {
       userRef.current = viewerUser;
       db.project.findMany.mockResolvedValue([]);
@@ -137,6 +153,46 @@ describe('projects routes', () => {
         },
       });
       expect(r.statusCode).toBe(400);
+    });
+  });
+
+  describe('GET /api/projects/:id', () => {
+    it('returns trackerRaw on the detail response', async () => {
+      userRef.current = viewerUser;
+      const rawPayload = {
+        id: '101',
+        name: 'Acme',
+        column_values: [{ id: 'status', text: 'On track', column: { title: 'Status' } }],
+      };
+      db.project.findUnique.mockResolvedValue({
+        ...baseProject(),
+        trackerRef: { provider: 'monday', externalId: '101' },
+        trackerRaw: rawPayload,
+        allocations: [],
+      });
+      db.trackerConnection.findFirst.mockResolvedValue({
+        lastSyncedAt: new Date('2026-05-23T10:00:00Z'),
+      });
+
+      const r = await app.inject({ method: 'GET', url: '/api/projects/proj-1' });
+      expect(r.statusCode).toBe(200);
+      const body = r.json() as Record<string, unknown>;
+      expect(body.trackerRaw).toEqual(rawPayload);
+    });
+
+    it('returns trackerRaw=null when project has no snapshot', async () => {
+      userRef.current = viewerUser;
+      db.project.findUnique.mockResolvedValue({
+        ...baseProject(),
+        trackerRef: null,
+        trackerRaw: null,
+        allocations: [],
+      });
+
+      const r = await app.inject({ method: 'GET', url: '/api/projects/proj-1' });
+      expect(r.statusCode).toBe(200);
+      const body = r.json() as Record<string, unknown>;
+      expect(body.trackerRaw).toBeNull();
     });
   });
 

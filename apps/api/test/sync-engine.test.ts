@@ -155,6 +155,164 @@ describe('SyncEngine', () => {
 
       const result = await engine.syncConnection('c1');
       expect(result.projectsPatched).toBe(0);
+      // The row is still touched so trackerRaw stays fresh, but name and keyDates
+      // must NOT be in the update payload because field_mapping says torii-owned.
+      expect(db.project.update).toHaveBeenCalledTimes(1);
+      const updateArg = db.project.update.mock.calls[0]![0] as { data: Record<string, unknown> };
+      expect(updateArg.data).not.toHaveProperty('name');
+      expect(updateArg.data).not.toHaveProperty('keyDates');
+      expect(updateArg.data).toHaveProperty('trackerRaw');
+    });
+
+    it('refreshes trackerRaw even when external matches existing (empty patch)', async () => {
+      const rawPayload = { id: '101', name: 'Acme', column_values: [{ id: 'status', text: 'On track' }] };
+      registerAdapter('monday', () =>
+        mockAdapter({
+          listProjects: vi.fn().mockResolvedValue([
+            {
+              externalId: '101',
+              name: 'Acme',
+              targetGoLive: '2026-09-01',
+              raw: rawPayload,
+            },
+          ]),
+        }),
+      );
+
+      db.trackerConnection.findUnique.mockResolvedValue({
+        id: 'c1',
+        provider: 'monday',
+        workspace: 'w',
+        accessTokenEnc: encrypted('tok'),
+        refreshTokenEnc: null,
+        status: 'ok',
+        lastSyncedAt: null,
+      });
+      db.project.findMany.mockResolvedValue([
+        {
+          id: 'proj-1',
+          name: 'Acme',
+          phase: 'Build',
+          state: 'OnTrack',
+          keyDates: { target_go_live: '2026-09-01' },
+          trackerRef: { provider: 'monday', externalId: '101' },
+          fieldMapping: {},
+        },
+      ]);
+
+      const result = await engine.syncConnection('c1');
+      expect(result.projectsPatched).toBe(0);
+      expect(db.project.update).toHaveBeenCalledTimes(1);
+      const updateArg = db.project.update.mock.calls[0]![0] as { data: Record<string, unknown> };
+      expect(updateArg.data).toEqual({ trackerRaw: rawPayload });
+    });
+  });
+
+  describe('syncConnection force mode', () => {
+    it('isolates per-item errors and refreshes trackerRaw for survivors', async () => {
+      const rawForB = { id: '102', name: 'Beta', column_values: [{ id: 'status', text: 'At risk' }] };
+      const getProject = vi.fn(async (externalId: string) => {
+        if (externalId === '101') throw new Error('boom: network');
+        if (externalId === '102') {
+          return {
+            externalId: '102',
+            name: 'Beta RENAMED',
+            targetGoLive: '2026-10-01',
+            raw: rawForB,
+          };
+        }
+        return null;
+      });
+      registerAdapter('monday', () => mockAdapter({ getProject }));
+
+      db.trackerConnection.findUnique.mockResolvedValue({
+        id: 'c1',
+        provider: 'monday',
+        workspace: 'w',
+        accessTokenEnc: encrypted('tok'),
+        refreshTokenEnc: null,
+        status: 'ok',
+        lastSyncedAt: null,
+      });
+      db.project.findMany.mockResolvedValue([
+        {
+          id: 'proj-A',
+          name: 'Alpha',
+          phase: 'Build',
+          state: 'OnTrack',
+          keyDates: {},
+          trackerRef: { provider: 'monday', externalId: '101' },
+          fieldMapping: {},
+        },
+        {
+          id: 'proj-B',
+          name: 'Beta',
+          phase: 'Build',
+          state: 'OnTrack',
+          keyDates: {},
+          trackerRef: { provider: 'monday', externalId: '102' },
+          fieldMapping: {},
+        },
+      ]);
+
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        const result = await engine.syncConnection('c1', { force: true });
+        expect(result.status).toBe('ok');
+        expect(result.projectsScanned).toBe(1);
+        expect(result.projectsPatched).toBe(1);
+
+        // Only proj-B should have been updated; proj-A errored and was skipped.
+        expect(db.project.update).toHaveBeenCalledTimes(1);
+        const updateArg = db.project.update.mock.calls[0]![0] as {
+          where: { id: string };
+          data: Record<string, unknown>;
+        };
+        expect(updateArg.where.id).toBe('proj-B');
+        expect(updateArg.data).toMatchObject({ name: 'Beta RENAMED', trackerRaw: rawForB });
+
+        // The per-item error must have been logged.
+        expect(consoleSpy).toHaveBeenCalledWith(
+          '[SyncEngine.forceRefreshLinked]',
+          expect.objectContaining({
+            connectionId: 'c1',
+            projectId: 'proj-A',
+            externalId: '101',
+          }),
+        );
+      } finally {
+        consoleSpy.mockRestore();
+      }
+    });
+
+    it('rethrows MondayAuthError so the connection is marked auth_failed', async () => {
+      const { MondayAuthError } = await import('../src/sync/monday/MondayAdapter.js');
+      const getProject = vi.fn().mockRejectedValue(new MondayAuthError());
+      registerAdapter('monday', () => mockAdapter({ getProject }));
+
+      db.trackerConnection.findUnique.mockResolvedValue({
+        id: 'c1',
+        provider: 'monday',
+        workspace: 'w',
+        accessTokenEnc: encrypted('tok'),
+        refreshTokenEnc: null,
+        status: 'ok',
+        lastSyncedAt: new Date('2026-01-01'),
+      });
+      db.project.findMany.mockResolvedValue([
+        {
+          id: 'proj-A',
+          name: 'Alpha',
+          phase: 'Build',
+          state: 'OnTrack',
+          keyDates: {},
+          trackerRef: { provider: 'monday', externalId: '101' },
+          fieldMapping: {},
+        },
+      ]);
+
+      const result = await engine.syncConnection('c1', { force: true });
+      expect(result.status).toBe('auth_failed');
       expect(db.project.update).not.toHaveBeenCalled();
     });
   });
