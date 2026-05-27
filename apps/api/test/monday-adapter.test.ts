@@ -367,4 +367,100 @@ describe('MondayAdapter', () => {
       capabilities: { listProjects: true, getProject: true },
     });
   });
+
+  describe('details extraction', () => {
+    function adapterReturning(columns: unknown[]) {
+      const fetchFn = vi.fn().mockResolvedValue(
+        mkResponse(200, {
+          data: {
+            boards: [
+              {
+                id: '1',
+                name: 'B',
+                items_page: { items: [{ id: '1', name: 'X', column_values: columns }] },
+              },
+            ],
+          },
+        }),
+      );
+      return new MondayAdapter({
+        workspace: 'w',
+        accessToken: 'tok',
+        fetchFn: fetchFn as unknown as typeof fetch,
+      });
+    }
+
+    it('maps recognized columns to details keys', async () => {
+      const adapter = adapterReturning([
+        { id: 'c1', text: 'Dana Lee', column: { title: 'Project Manager' } },
+        { id: 'c2', text: 'ARCU', column: { title: 'Core' } },
+        { id: 'c3', text: 'Active', column: { title: 'Customer Status' } },
+      ]);
+      const [item] = await adapter.listProjects();
+      expect(item!.details).toEqual({
+        project_manager: 'Dana Lee',
+        core_vendor: 'ARCU',
+        customer_status: 'Active',
+      });
+    });
+
+    it('ignores unrecognized columns for details', async () => {
+      const adapter = adapterReturning([
+        { id: 'c1', text: 'secret', column: { title: 'Internal Notes' } },
+      ]);
+      const [item] = await adapter.listProjects();
+      expect(item!.details).toBeUndefined();
+    });
+
+    it('omits empty recognized columns', async () => {
+      const adapter = adapterReturning([
+        { id: 'c1', text: '', column: { title: 'Core Solution' } },
+        { id: 'c2', text: 'Dana Lee', column: { title: 'Project Manager' } },
+      ]);
+      const [item] = await adapter.listProjects();
+      expect(item!.details).toEqual({ project_manager: 'Dana Lee' });
+    });
+
+    it('uses display_value for mirror/board_relation columns', async () => {
+      const adapter = adapterReturning([
+        { id: 'c1', text: '', display_value: 'Dana Lee', column: { title: 'Project Manager' } },
+        { id: 'c2', text: '', display_value: 'Jack Henry', column: { title: 'Core' } },
+      ]);
+      const [item] = await adapter.listProjects();
+      expect(item!.details).toEqual({
+        project_manager: 'Dana Lee',
+        core_vendor: 'Jack Henry',
+      });
+    });
+
+    it('prefers display_value over text when both are present', async () => {
+      const adapter = adapterReturning([
+        { id: 'c1', text: 'stale', display_value: 'Fresh', column: { title: 'Customer Status' } },
+      ]);
+      const [item] = await adapter.listProjects();
+      expect(item!.details).toEqual({ customer_status: 'Fresh' });
+    });
+
+    it('extracts the URL from a link column "Label - url"', async () => {
+      const adapter = adapterReturning([
+        {
+          id: 'c1',
+          text: 'PES-31619 - https://portx.atlassian.net/browse/PES-31619',
+          column: { title: 'Jira' },
+        },
+      ]);
+      const [item] = await adapter.listProjects();
+      expect(item!.details).toEqual({
+        jira_project_url: 'https://portx.atlassian.net/browse/PES-31619',
+      });
+    });
+
+    it('omits a link column with no URL', async () => {
+      const adapter = adapterReturning([
+        { id: 'c1', text: 'Not available', column: { title: 'Status Report' } },
+      ]);
+      const [item] = await adapter.listProjects();
+      expect(item!.details).toBeUndefined();
+    });
+  });
 });

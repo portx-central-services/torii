@@ -6,6 +6,7 @@ import {
   ProjectUpdateSchema,
   ProjectListFilterSchema,
   KeyDatesSchema,
+  ProjectDetailsSchema,
   ValidationError,
   NotFoundError,
 } from '@torii/shared';
@@ -21,6 +22,7 @@ function serializeProject(p: Project) {
     phase: p.phase,
     state: p.state,
     keyDates: p.keyDates,
+    details: p.details ?? {},
     ownerId: p.ownerId,
     trackerRef: p.trackerRef,
     fieldMapping: p.fieldMapping,
@@ -106,6 +108,7 @@ export function registerProjectRoutes(
         phase: input.phase ?? Phase.Discovery,
         state: input.state ?? ProjectState.OnTrack,
         keyDates: input.keyDates ?? {},
+        details: input.details ?? {},
         ownerId: input.ownerId ?? null,
         fieldMapping: {},
       },
@@ -133,6 +136,17 @@ export function registerProjectRoutes(
       nextKeyDates = validated.data;
     }
 
+    // If details is being updated, shallow-merge over existing and re-validate.
+    let nextDetails = existing.details as Record<string, string | undefined>;
+    if (input.details) {
+      const merged = { ...nextDetails, ...input.details };
+      const validated = ProjectDetailsSchema.safeParse(merged);
+      if (!validated.success) {
+        throw new ValidationError('Invalid details', validated.error.errors);
+      }
+      nextDetails = validated.data;
+    }
+
     // Auto-Done rule: advancing to Hypercare with actual_go_live set ⇒ state=Done
     // unless caller explicitly passed state.
     let nextState = input.state ?? existing.state;
@@ -153,6 +167,7 @@ export function registerProjectRoutes(
           phase: input.phase ?? existing.phase,
           state: nextState,
           keyDates: nextKeyDates,
+          details: nextDetails,
           ownerId: input.ownerId !== undefined ? input.ownerId : existing.ownerId,
         },
       });

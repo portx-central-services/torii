@@ -2,7 +2,12 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PHASES, PROJECT_STATES, type Phase, type ProjectState } from '@torii/shared';
-import { endpoints, type MondayItemSnapshot, type ProjectDetail } from '../api/endpoints.js';
+import {
+  endpoints,
+  PROJECT_DETAIL_FIELDS,
+  type MondayItemSnapshot,
+  type ProjectDetail,
+} from '../api/endpoints.js';
 import { PhaseBadge, StateBadge } from '../components/Badge.js';
 import { useIsPM } from '../auth/AuthProvider.js';
 import { ApiError } from '../api/client.js';
@@ -124,6 +129,13 @@ export function ProjectDetailPage() {
             ) : (
               <ProjectReadOnlyPanel project={project} />
             )}
+          </section>
+
+          <section className="section-card">
+            <div className="section-card-head">
+              <h3>Project details</h3>
+            </div>
+            <ProjectDetailsPanel project={project} canEdit={isPM} />
           </section>
         </div>
 
@@ -352,6 +364,106 @@ function KV({ label, value }: { label: string; value: ReactNode }) {
     <div className="detail-kv">
       <div className="detail-kv-label">{label}</div>
       <div className="detail-kv-value">{value}</div>
+    </div>
+  );
+}
+
+function detailOwner(project: ProjectDetail, key: string): 'torii' | 'monday' {
+  const mapped = project.fieldMapping?.[`details.${key}`];
+  if (mapped === 'torii' || mapped === 'monday') return mapped;
+  // Default: only primary_contact is Torii-managed; the rest come from Monday.
+  return key === 'primary_contact' ? 'torii' : 'monday';
+}
+
+function ProjectDetailsPanel({
+  project,
+  canEdit,
+}: {
+  project: ProjectDetail;
+  canEdit: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const editableFields = PROJECT_DETAIL_FIELDS.filter(
+    (f) => detailOwner(project, f.key) === 'torii',
+  );
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [err, setErr] = useState<string | null>(null);
+
+  function startEdit() {
+    const seed: Record<string, string> = {};
+    for (const f of editableFields) seed[f.key] = project.details?.[f.key] ?? '';
+    setDraft(seed);
+    setErr(null);
+    setEditing(true);
+  }
+
+  const mutation = useMutation({
+    mutationFn: () => endpoints.updateProject(project.id, { details: draft }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['project', project.id] });
+      await queryClient.invalidateQueries({ queryKey: ['projects'] });
+      setEditing(false);
+    },
+    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Save failed'),
+  });
+
+  return (
+    <div className="detail-settings-grid">
+      {PROJECT_DETAIL_FIELDS.map((field) => {
+        const value = project.details?.[field.key] ?? '';
+        const isEditable = editing && editableFields.some((f) => f.key === field.key);
+        let display: ReactNode;
+        if (isEditable) {
+          display = (
+            <input
+              className="input w-full"
+              value={draft[field.key] ?? ''}
+              onChange={(e) => setDraft((d) => ({ ...d, [field.key]: e.target.value }))}
+            />
+          );
+        } else if (!value) {
+          display = '—';
+        } else if ('isLink' in field && field.isLink) {
+          display = (
+            <a href={value} target="_blank" rel="noreferrer" className="text-torii hover:underline">
+              {value}
+            </a>
+          );
+        } else {
+          display = value;
+        }
+        return <KV key={field.key} label={field.label} value={display} />;
+      })}
+      {canEdit && editableFields.length > 0 && (
+        <div className="detail-form-actions" style={{ gridColumn: '1 / -1' }}>
+          {err && <span className="text-xs text-red-700">{err}</span>}
+          {editing ? (
+            <>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setEditing(false)}
+                disabled={mutation.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => mutation.mutate()}
+                disabled={mutation.isPending}
+              >
+                {mutation.isPending ? 'Saving...' : 'Save details'}
+              </button>
+            </>
+          ) : (
+            <button type="button" className="btn-secondary" onClick={startEdit}>
+              Edit details
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

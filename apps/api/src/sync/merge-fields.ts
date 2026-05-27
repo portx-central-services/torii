@@ -1,5 +1,6 @@
 import {
   DEFAULT_FIELD_MAPPING,
+  PROJECT_DETAIL_KEYS,
   type ExternalProject,
   type FieldOwner,
 } from '@torii/shared';
@@ -7,11 +8,13 @@ import {
 export interface ExistingProjectSlice {
   name: string;
   keyDates: Record<string, string | undefined> | null;
+  details: Record<string, string | undefined> | null;
 }
 
 export interface MergePatch {
   name?: string;
   keyDates?: Record<string, string | undefined>;
+  details?: Record<string, string | undefined>;
 }
 
 /**
@@ -56,6 +59,22 @@ export function mergeExternalIntoTorii(
         target_go_live: external.targetGoLive,
       };
     }
+  }
+
+  // details.* — only Monday-owned keys with a changed external value are applied,
+  // shallow-merged over the existing details so torii-owned keys survive.
+  const existingDetails = existing.details ?? {};
+  const detailUpdates: Record<string, string> = {};
+  for (const key of PROJECT_DETAIL_KEYS) {
+    const externalValue = external.details?.[key];
+    if (externalValue === undefined) continue; // no signal from the tracker
+    if (lookup(`details.${key}`) === 'torii') continue; // PM-owned, never overwrite
+    if (externalValue !== existingDetails[key]) {
+      detailUpdates[key] = externalValue;
+    }
+  }
+  if (Object.keys(detailUpdates).length > 0) {
+    patch.details = { ...existingDetails, ...detailUpdates };
   }
 
   return patch;

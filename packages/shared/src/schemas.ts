@@ -34,6 +34,48 @@ export const KeyDatesSchema = z
     }
   });
 
+/** Fixed set of free-form project detail fields surfaced in the list/detail UIs. */
+export const PROJECT_DETAIL_KEYS = [
+  'project_manager',
+  'solution_architect',
+  'solution_consultant',
+  'core_solution',
+  'core_vendor',
+  'primary_contact',
+  'status_report_url',
+  'jira_project_url',
+  'customer_type',
+  'finance_use_case',
+  'use_case_group',
+  'customer_status',
+] as const;
+
+export type ProjectDetailKey = (typeof PROJECT_DETAIL_KEYS)[number];
+
+/** Detail keys whose values are URLs (rendered as links, URL-validated on write). */
+export const PROJECT_DETAIL_URL_KEYS = ['status_report_url', 'jira_project_url'] as const;
+
+const detailText = z.string().optional();
+// Allow empty string (cleared field) or a valid URL.
+const detailUrl = z.union([z.literal(''), z.string().url()]).optional();
+
+export const ProjectDetailsSchema = z
+  .object({
+    project_manager: detailText,
+    solution_architect: detailText,
+    solution_consultant: detailText,
+    core_solution: detailText,
+    core_vendor: detailText,
+    primary_contact: detailText,
+    status_report_url: detailUrl,
+    jira_project_url: detailUrl,
+    customer_type: detailText,
+    finance_use_case: detailText,
+    use_case_group: detailText,
+    customer_status: detailText,
+  })
+  .strict();
+
 export const TrackerRefSchema = z
   .object({
     provider: TrackerProviderSchema,
@@ -59,6 +101,7 @@ export const ProjectOutSchema = z.object({
   phase: PhaseSchema,
   state: ProjectStateSchema,
   keyDates: KeyDatesSchema,
+  details: ProjectDetailsSchema.optional(),
   ownerId: z.string().nullable(),
   trackerRef: TrackerRefSchema,
   fieldMapping: FieldMappingSchema,
@@ -71,6 +114,7 @@ export const ProjectCreateSchema = z.object({
   phase: PhaseSchema.optional(),
   state: ProjectStateSchema.optional(),
   keyDates: KeyDatesSchema.optional(),
+  details: ProjectDetailsSchema.optional(),
   ownerId: z.string().optional().nullable(),
 });
 
@@ -80,6 +124,7 @@ export const ProjectUpdateSchema = z
     phase: PhaseSchema.optional(),
     state: ProjectStateSchema.optional(),
     keyDates: KeyDatesSchema.optional(),
+    details: ProjectDetailsSchema.optional(),
     ownerId: z.string().nullable().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
@@ -126,6 +171,7 @@ export const AllocationUpdateSchema = z
   });
 
 export type KeyDates = z.infer<typeof KeyDatesSchema>;
+export type ProjectDetails = z.infer<typeof ProjectDetailsSchema>;
 export type TrackerRef = z.infer<typeof TrackerRefSchema>;
 export type FieldMapping = z.infer<typeof FieldMappingSchema>;
 export type ProjectOut = z.infer<typeof ProjectOutSchema>;

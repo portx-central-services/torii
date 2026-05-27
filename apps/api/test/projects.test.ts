@@ -12,6 +12,7 @@ function baseProject() {
     phase: 'Build',
     state: 'OnTrack',
     keyDates: { kickoff: '2026-06-01', target_go_live: '2026-09-01' },
+    details: {},
     ownerId: null,
     trackerRef: null,
     fieldMapping: {},
@@ -193,6 +194,54 @@ describe('projects routes', () => {
       expect(r.statusCode).toBe(200);
       const body = r.json() as Record<string, unknown>;
       expect(body.trackerRaw).toBeNull();
+    });
+  });
+
+  describe('PATCH /api/projects/:id details', () => {
+    it('shallow-merges and persists details', async () => {
+      userRef.current = pmUser;
+      const project = { ...baseProject(), details: { project_manager: 'Dana' } };
+      db.project.findUnique.mockResolvedValue(project);
+      db.project.update.mockImplementation(async (args: { data: Record<string, unknown> }) => ({
+        ...project,
+        ...args.data,
+      }));
+
+      const r = await app.inject({
+        method: 'PATCH',
+        url: '/api/projects/proj-1',
+        payload: { details: { customer_status: 'Active' } },
+      });
+      expect(r.statusCode).toBe(200);
+      const updateCall = db.project.update.mock.calls[0]?.[0] as {
+        data: { details: Record<string, string> };
+      };
+      expect(updateCall.data.details).toEqual({
+        project_manager: 'Dana',
+        customer_status: 'Active',
+      });
+    });
+
+    it('rejects an unknown details key', async () => {
+      userRef.current = pmUser;
+      db.project.findUnique.mockResolvedValue(baseProject());
+      const r = await app.inject({
+        method: 'PATCH',
+        url: '/api/projects/proj-1',
+        payload: { details: { not_a_field: 'x' } },
+      });
+      expect(r.statusCode).toBe(400);
+    });
+
+    it('rejects a malformed link field', async () => {
+      userRef.current = pmUser;
+      db.project.findUnique.mockResolvedValue(baseProject());
+      const r = await app.inject({
+        method: 'PATCH',
+        url: '/api/projects/proj-1',
+        payload: { details: { jira_project_url: 'not-a-url' } },
+      });
+      expect(r.statusCode).toBe(400);
     });
   });
 

@@ -7,6 +7,8 @@ import type {
 } from '@torii/shared';
 
 const MONDAY_API_URL = 'https://api.monday.com/v2';
+// Version that exposes `display_value` on MirrorValue/BoardRelationValue column types.
+const MONDAY_API_VERSION = '2024-10';
 
 export class MondayAuthError extends Error {
   constructor(message = 'Monday.com authentication failed') {
@@ -35,6 +37,8 @@ interface MondayColumnValue {
   type?: string;
   text?: string | null;
   value?: string | null;
+  /** Present only on mirror/board_relation columns; the human-readable value. */
+  display_value?: string | null;
 }
 
 interface MondayItem {
@@ -67,7 +71,11 @@ const LIST_BOARDS_QUERY = `
         items {
           id
           name
-          column_values { id type text value column { id title } }
+          column_values {
+            id type text value column { id title }
+            ... on MirrorValue { display_value }
+            ... on BoardRelationValue { display_value }
+          }
         }
       }
     }
@@ -94,7 +102,11 @@ const GET_ITEM_QUERY = `
     items(ids: $ids) {
       id
       name
-      column_values { id type text value column { id title } }
+      column_values {
+        id type text value column { id title }
+        ... on MirrorValue { display_value }
+        ... on BoardRelationValue { display_value }
+      }
     }
   }
 `;
@@ -137,6 +149,54 @@ function extractTargetGoLive(item: MondayItem): string | undefined {
   return undefined;
 }
 
+/** Monday board column title → Torii `details.<key>`. Confirmed against live synced data. */
+const MONDAY_COLUMN_TITLE_MAP: Record<string, string> = {
+  'Project Manager': 'project_manager',
+  'Solution Architect': 'solution_architect',
+  'Senior Consultant': 'solution_consultant',
+  'Core Solution': 'core_solution',
+  Core: 'core_vendor',
+  'Status Report': 'status_report_url',
+  Jira: 'jira_project_url',
+  'Customer Type': 'customer_type',
+  'Finance - Use Case': 'finance_use_case',
+  'Use Case - Group': 'use_case_group',
+  'Customer Status': 'customer_status',
+};
+
+const URL_DETAIL_KEYS = new Set(['status_report_url', 'jira_project_url']);
+
+/** First http(s) URL token in a string, or undefined. */
+function firstUrl(text: string): string | undefined {
+  const match = text.match(/https?:\/\/\S+/);
+  return match ? match[0] : undefined;
+}
+
+/**
+ * Map recognized Monday columns to `details.*` values. Link columns yield the
+ * extracted URL; other columns yield trimmed text. Empty values are omitted.
+ */
+function extractDetails(item: MondayItem): Record<string, string> {
+  const details: Record<string, string> = {};
+  for (const col of item.column_values ?? []) {
+    const title = col.column?.title;
+    if (!title) continue;
+    const key = MONDAY_COLUMN_TITLE_MAP[title];
+    if (!key) continue;
+    // Mirror/board_relation columns expose their value via display_value; all
+    // others (text, link, status, ...) use text.
+    const raw = col.display_value?.trim() || col.text?.trim();
+    if (!raw) continue;
+    if (URL_DETAIL_KEYS.has(key)) {
+      const url = firstUrl(raw);
+      if (url) details[key] = url;
+    } else {
+      details[key] = raw;
+    }
+  }
+  return details;
+}
+
 function extractProjectName(item: MondayItem): string {
   for (const col of item.column_values ?? []) {
     const lowerId = col.id.toLowerCase();
@@ -171,10 +231,12 @@ function extractProjectName(item: MondayItem): string {
 }
 
 function toExternalProject(item: MondayItem): ExternalProject {
+  const details = extractDetails(item);
   return {
     externalId: item.id,
     name: extractProjectName(item),
     targetGoLive: extractTargetGoLive(item),
+    ...(Object.keys(details).length > 0 ? { details } : {}),
     raw: item,
   };
 }
@@ -196,6 +258,8 @@ export class MondayAdapter implements TrackerAdapter {
       headers: {
         'Content-Type': 'application/json',
         Authorization: this.accessToken,
+        // Pin a version that exposes display_value on MirrorValue/BoardRelationValue.
+        'API-Version': MONDAY_API_VERSION,
       },
       body: JSON.stringify({ query, variables }),
     });
@@ -274,6 +338,12 @@ export class MondayAdapter implements TrackerAdapter {
           );
         });
 
+      // Flag mapped column titles that did not appear on the item (possible board drift).
+      const presentTitles = new Set(columns.map((c) => c.column?.title).filter(Boolean));
+      const missingMappedTitles = Object.keys(MONDAY_COLUMN_TITLE_MAP).filter(
+        (title) => !presentTitles.has(title),
+      );
+
       console.info('[MondayAdapter.getProject]', {
         externalId,
         usedFallbackQuery,
@@ -281,6 +351,8 @@ export class MondayAdapter implements TrackerAdapter {
         columnCount: columns.length,
         projectNameCandidates,
         resolvedName: item ? extractProjectName(item) : null,
+        resolvedDetails: item ? extractDetails(item) : null,
+        missingMappedTitles,
       });
     }
     return item ? toExternalProject(item) : null;

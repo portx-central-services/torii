@@ -13,6 +13,7 @@ import { registerPeopleRoutes } from './routes/people.js';
 import { registerAllocationRoutes } from './routes/allocations.js';
 import { registerCapacityRoutes } from './routes/capacity.js';
 import { registerTrackerRoutes } from './routes/tracker.js';
+import { registerPreferencesRoutes } from './routes/preferences.js';
 import { setupSync } from './sync/setup.js';
 import { getPrisma, type DB } from './db.js';
 import type { Env } from './env.js';
@@ -44,6 +45,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerPeopleRoutes(app, { db });
   registerAllocationRoutes(app, { db });
   registerCapacityRoutes(app, { db });
+  registerPreferencesRoutes(app, { db });
 
   const engine = setupSync({
     db,

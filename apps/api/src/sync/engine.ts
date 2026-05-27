@@ -79,6 +79,7 @@ export class SyncEngine {
         const existing: ExistingProjectSlice = {
           name: project.name,
           keyDates: (project.keyDates as Record<string, string | undefined>) ?? {},
+          details: (project.details as Record<string, string | undefined>) ?? {},
         };
         const fieldMapping =
           (project.fieldMapping as Record<string, 'torii' | 'monday'> | null) ?? null;
@@ -90,6 +91,7 @@ export class SyncEngine {
             trackerRaw: (external.raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
             ...(patch.name !== undefined ? { name: patch.name } : {}),
             ...(patch.keyDates !== undefined ? { keyDates: patch.keyDates } : {}),
+            ...(patch.details !== undefined ? { details: patch.details } : {}),
           },
         });
         if (Object.keys(patch).length > 0) patched += 1;
@@ -138,6 +140,7 @@ export class SyncEngine {
       const existing: ExistingProjectSlice = {
         name: project.name,
         keyDates: (project.keyDates as Record<string, string | undefined>) ?? {},
+        details: (project.details as Record<string, string | undefined>) ?? {},
       };
       const fieldMapping =
         (project.fieldMapping as Record<string, 'torii' | 'monday'> | null) ?? null;
@@ -149,6 +152,7 @@ export class SyncEngine {
           trackerRaw: (external.raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
           ...(patch.name !== undefined ? { name: patch.name } : {}),
           ...(patch.keyDates !== undefined ? { keyDates: patch.keyDates } : {}),
+          ...(patch.details !== undefined ? { details: patch.details } : {}),
         },
       });
       if (Object.keys(patch).length > 0) patched += 1;
@@ -184,6 +188,7 @@ export class SyncEngine {
       const existing: ExistingProjectSlice = {
         name: project.name,
         keyDates: (project.keyDates as Record<string, string | undefined>) ?? {},
+        details: (project.details as Record<string, string | undefined>) ?? {},
       };
       const fieldMapping =
         (project.fieldMapping as Record<string, 'torii' | 'monday'> | null) ?? null;
@@ -195,6 +200,7 @@ export class SyncEngine {
           trackerRaw: (external.raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
           ...(patch.name !== undefined ? { name: patch.name } : {}),
           ...(patch.keyDates !== undefined ? { keyDates: patch.keyDates } : {}),
+          ...(patch.details !== undefined ? { details: patch.details } : {}),
         },
       });
       return { scanned: 1, patched: Object.keys(patch).length > 0 ? 1 : 0 };

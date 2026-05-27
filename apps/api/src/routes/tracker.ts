@@ -244,6 +244,7 @@ export function registerTrackerRoutes(
       const name = external?.name ?? `Monday item ${externalId}`;
       const newKeyDateFields: Record<string, string> = {};
       if (external?.targetGoLive) newKeyDateFields.target_go_live = external.targetGoLive;
+      const newDetailFields = external?.details ?? {};
       if (!external?.name) placeholdered.push(externalId);
 
       const trackerRawValue = (external?.raw ?? Prisma.JsonNull) as Prisma.InputJsonValue;
@@ -253,11 +254,16 @@ export function registerTrackerRoutes(
           ...((matching.keyDates as Record<string, string | undefined>) ?? {}),
           ...newKeyDateFields,
         };
+        const mergedDetails = {
+          ...((matching.details as Record<string, string | undefined>) ?? {}),
+          ...newDetailFields,
+        };
         const project = await db.project.update({
           where: { id: matching.id },
           data: {
             name,
             keyDates: mergedKeyDates,
+            details: mergedDetails,
             trackerRaw: trackerRawValue,
           },
         });
@@ -270,6 +276,7 @@ export function registerTrackerRoutes(
             fieldMapping: DEFAULT_FIELD_MAPPING,
             trackerRaw: trackerRawValue,
             ...(Object.keys(newKeyDateFields).length > 0 ? { keyDates: newKeyDateFields } : {}),
+            ...(Object.keys(newDetailFields).length > 0 ? { details: newDetailFields } : {}),
           },
         });
         created.push({ id: project.id, externalId });

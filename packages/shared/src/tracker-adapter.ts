@@ -5,6 +5,8 @@ export interface ExternalProject {
   name?: string;
   /** ISO yyyy-mm-dd; the adapter is responsible for normalization. */
   targetGoLive?: string;
+  /** Free-form project detail fields keyed by `ProjectDetailKey`. */
+  details?: Record<string, string>;
   /** Adapter-specific raw payload, retained for debugging. */
   raw?: unknown;
 }
@@ -53,4 +55,18 @@ export const DEFAULT_FIELD_MAPPING: Record<string, FieldOwner> = {
   'key_dates.target_go_live': 'monday',
   phase: 'torii',
   state: 'torii',
+  // Monday-sourced project details.
+  'details.project_manager': 'monday',
+  'details.solution_architect': 'monday',
+  'details.solution_consultant': 'monday',
+  'details.core_solution': 'monday',
+  'details.core_vendor': 'monday',
+  'details.status_report_url': 'monday',
+  'details.jira_project_url': 'monday',
+  'details.customer_type': 'monday',
+  'details.finance_use_case': 'monday',
+  'details.use_case_group': 'monday',
+  'details.customer_status': 'monday',
+  // No Monday source — PM-managed.
+  'details.primary_contact': 'torii',
 };

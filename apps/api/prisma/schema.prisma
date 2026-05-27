@@ -54,8 +54,22 @@ model Person {
   allocations         Allocation[]
   sessions            Session[]
   phaseTransitions    PhaseAuditLog[]
+  preference          UserPreference?
 
   @@map("people")
+}
+
+model UserPreference {
+  id        String   @id @default(cuid())
+  personId  String   @unique @map("person_id")
+  // { hiddenProjectColumns: string[], ... } - per-user UI preferences
+  data      Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
 }
 
 model Project {
@@ -70,6 +84,8 @@ model Project {
   trackerRef    Json?        @map("tracker_ref")
   // Last-synced raw payload from the tracker (e.g., Monday item + column_values). Null until first sync.
   trackerRaw    Json?        @map("tracker_raw")
+  // Free-form project detail fields (project_manager, core_vendor, status_report_url, ...). See PROJECT_DETAIL_KEYS.
+  details       Json         @default("{}") @map("details")
   // { fieldName: "torii" | "monday" } - per-field ownership
   fieldMapping  Json         @default("{}") @map("field_mapping")
   createdAt     DateTime     @default(now()) @map("created_at")

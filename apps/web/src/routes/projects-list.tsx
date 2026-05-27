@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -8,9 +8,15 @@ import {
   getSortedRowModel,
   useReactTable,
   type SortingState,
+  type VisibilityState,
 } from '@tanstack/react-table';
 import { PHASES, PROJECT_STATES, type Phase, type ProjectState } from '@torii/shared';
-import { endpoints, type Project } from '../api/endpoints.js';
+import {
+  endpoints,
+  PROJECT_DETAIL_FIELDS,
+  DEFAULT_HIDDEN_DETAIL_COLUMNS,
+  type Project,
+} from '../api/endpoints.js';
 import { PhaseBadge, StateBadge } from '../components/Badge.js';
 import { Modal } from '../components/Modal.js';
 import { useIsPM } from '../auth/AuthProvider.js';
@@ -39,6 +45,43 @@ export function ProjectsListPage() {
         owner: filters.owner || undefined,
       }),
   });
+
+  const queryClient = useQueryClient();
+  const prefsQuery = useQuery({
+    queryKey: ['preferences'],
+    queryFn: () => endpoints.getPreferences(),
+  });
+
+  // Column visibility is seeded once from saved prefs. A user with no saved
+  // hidden columns gets the default-hidden set; once they have any saved value
+  // we honor it verbatim.
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (seeded.current || !prefsQuery.data) return;
+    const hidden =
+      prefsQuery.data.hiddenProjectColumns.length > 0
+        ? prefsQuery.data.hiddenProjectColumns
+        : DEFAULT_HIDDEN_DETAIL_COLUMNS;
+    const vis: VisibilityState = {};
+    for (const field of PROJECT_DETAIL_FIELDS) vis[field.key] = !hidden.includes(field.key);
+    setColumnVisibility(vis);
+    seeded.current = true;
+  }, [prefsQuery.data]);
+
+  const savePrefs = useMutation({
+    mutationFn: (hidden: string[]) => endpoints.updatePreferences(hidden),
+    onSuccess: (data) => queryClient.setQueryData(['preferences'], data),
+  });
+
+  function toggleColumn(key: string) {
+    setColumnVisibility((prev) => {
+      const next = { ...prev, [key]: prev[key] === false ? true : false };
+      const hidden = PROJECT_DETAIL_FIELDS.filter((f) => next[f.key] === false).map((f) => f.key);
+      savePrefs.mutate(hidden);
+      return next;
+    });
+  }
 
   const projects = query.data ?? [];
   const now = Date.now();
@@ -95,6 +138,31 @@ export function ProjectsListPage() {
             </span>
           ) : null,
       }),
+      ...PROJECT_DETAIL_FIELDS.map((field) =>
+        columnHelper.accessor((p) => p.details?.[field.key] || undefined, {
+          id: field.key,
+          header: field.label,
+          // Empty values always sort to the bottom regardless of direction.
+          sortUndefined: 'last',
+          cell: (ctx) => {
+            const value = ctx.getValue();
+            if (!value) return <span className="text-gray-400">—</span>;
+            if ('isLink' in field && field.isLink) {
+              return (
+                <a
+                  href={value}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-torii hover:underline"
+                >
+                  Open
+                </a>
+              );
+            }
+            return value;
+          },
+        }),
+      ),
     ],
     [],
   );
@@ -102,8 +170,9 @@ export function ProjectsListPage() {
   const table = useReactTable({
     data: projects,
     columns,
-    state: { sorting },
+    state: { sorting, columnVisibility },
     onSortingChange: setSorting,
+    onColumnVisibilityChange: setColumnVisibility,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
   });
@@ -192,11 +261,14 @@ export function ProjectsListPage() {
             />
           </div>
         </div>
-        {isPM && (
-          <button type="button" className="btn-primary" onClick={() => setCreateOpen(true)}>
-            New project
-          </button>
-        )}
+        <div className="flex items-end gap-2">
+          <ColumnsMenu visibility={columnVisibility} onToggle={toggleColumn} />
+          {isPM && (
+            <button type="button" className="btn-primary" onClick={() => setCreateOpen(true)}>
+              New project
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="card">
@@ -209,6 +281,7 @@ export function ProjectsListPage() {
         ) : (query.data?.length ?? 0) === 0 ? (
           <EmptyState onCreate={isPM ? () => setCreateOpen(true) : undefined} />
         ) : (
+          <div style={{ overflowX: 'auto' }}>
           <table className="tbl">
             <thead>
               {table.getHeaderGroups().map((hg) => (
@@ -236,6 +309,7 @@ export function ProjectsListPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
@@ -243,6 +317,47 @@ export function ProjectsListPage() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
       />
+    </div>
+  );
+}
+
+function ColumnsMenu({
+  visibility,
+  onToggle,
+}: {
+  visibility: VisibilityState;
+  onToggle: (key: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <button type="button" className="btn-secondary" onClick={() => setOpen((v) => !v)}>
+        Columns
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div
+            className="absolute right-0 z-20 mt-1 w-56 rounded border border-gray-200 bg-white p-2 shadow-lg"
+            style={{ maxHeight: 320, overflowY: 'auto' }}
+          >
+            <div className="px-1 pb-1 text-xs font-medium text-gray-500">Detail columns</div>
+            {PROJECT_DETAIL_FIELDS.map((field) => (
+              <label
+                key={field.key}
+                className="flex items-center gap-2 px-1 py-1 text-sm hover:bg-gray-50 rounded cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={visibility[field.key] !== false}
+                  onChange={() => onToggle(field.key)}
+                />
+                {field.label}
+              </label>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
