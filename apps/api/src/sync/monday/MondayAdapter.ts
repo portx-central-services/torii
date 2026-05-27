@@ -62,6 +62,18 @@ interface GraphQLResponse<T> {
   }>;
 }
 
+// Single source of truth for the column_values selection. BOTH the board-listing
+// query and the per-item query MUST use this so bulk sync and per-item sync/import
+// always return identical column data. When adding fields (e.g., a new column type's
+// `display_value`), edit this one constant — never inline a selection in a query.
+const COLUMN_VALUES_SELECTION = `
+  column_values {
+    id type text value column { id title }
+    ... on MirrorValue { display_value }
+    ... on BoardRelationValue { display_value }
+  }
+`;
+
 const LIST_BOARDS_QUERY = `
   query ListBoards {
     boards(limit: 50) {
@@ -71,11 +83,7 @@ const LIST_BOARDS_QUERY = `
         items {
           id
           name
-          column_values {
-            id type text value column { id title }
-            ... on MirrorValue { display_value }
-            ... on BoardRelationValue { display_value }
-          }
+          ${COLUMN_VALUES_SELECTION}
         }
       }
     }
@@ -102,11 +110,7 @@ const GET_ITEM_QUERY = `
     items(ids: $ids) {
       id
       name
-      column_values {
-        id type text value column { id title }
-        ... on MirrorValue { display_value }
-        ... on BoardRelationValue { display_value }
-      }
+      ${COLUMN_VALUES_SELECTION}
     }
   }
 `;

@@ -359,6 +359,44 @@ describe('MondayAdapter', () => {
     expect(await adapter.getProject('missing')).toBeNull();
   });
 
+  it('getProject resolves details from display_value (per-item query parity)', async () => {
+    // Regression guard: the per-item query must request the same column selection
+    // as the board-listing query, including display_value.
+    const fetchFn = vi.fn().mockResolvedValue(
+      mkResponse(200, {
+        data: {
+          items: [
+            {
+              id: '42',
+              name: 'Acme',
+              column_values: [
+                {
+                  id: 'c1',
+                  type: 'board_relation',
+                  text: '',
+                  display_value: 'Dana Lee',
+                  column: { title: 'Project Manager' },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    const adapter = new MondayAdapter({
+      workspace: 'w',
+      accessToken: 'tok',
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+    const project = await adapter.getProject('42');
+    expect(project?.details).toEqual({ project_manager: 'Dana Lee' });
+    // The query actually sent must include the display_value fragment.
+    const sentBody = JSON.parse(
+      (fetchFn.mock.calls[0]![1] as { body: string }).body,
+    ) as { query: string };
+    expect(sentBody.query).toContain('display_value');
+  });
+
   it('getMetadata returns provider, workspace, and capabilities', async () => {
     const adapter = new MondayAdapter({ workspace: 'acme', accessToken: 'tok' });
     expect(await adapter.getMetadata()).toEqual({

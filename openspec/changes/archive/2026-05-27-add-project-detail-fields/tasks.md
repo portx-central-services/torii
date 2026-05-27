@@ -18,6 +18,8 @@
 - [x] 3.2 In `toExternalProject`, populate `details` from `column_values` by title match; omit empty values; for `status_report_url`/`jira_project_url` extract the first `https?://` token from the text
 - [x] 3.3 Log expected-but-unmatched column titles at info level to aid debugging title drift
 - [x] 3.4 Unit-test extraction: recognized column maps, unrecognized ignored, empty yields no key, link column yields extracted URL
+- [x] 3.5 Request `display_value` (MirrorValue/BoardRelationValue) and pin `API-Version`; resolve `display_value ?? text`
+- [x] 3.6 Define a single shared `COLUMN_VALUES_SELECTION` reused by both `LIST_BOARDS_QUERY` and `GET_ITEM_QUERY` so the two cannot drift; regression-test per-item query parity (display_value)
 
 ## 4. Merge engine: details ownership
 
@@ -65,7 +67,7 @@
 - [x] 10.1 `pnpm --filter @torii/api test` green
 - [x] 10.2 `pnpm --filter @torii/web exec tsc --noEmit` clean
 - [x] 10.3 Apply migration in dev DB; verify `projects.details` and `user_preferences` exist
-- [ ] 10.4 In the running app: Sync Now, confirm detail fields populate from Monday on the list + detail pages
+- [x] 10.4 In the running app: Sync Now, confirm detail fields populate from Monday on the list + detail pages
 - [ ] 10.5 Hide a column, reload (and on another browser/profile) — confirm it stays hidden per user
 - [ ] 10.6 Click a details column header — confirm client-side sort with empties last
 - [ ] 10.7 As PM, flip a detail field to torii-owned, edit it, run sync — confirm the manual value survives

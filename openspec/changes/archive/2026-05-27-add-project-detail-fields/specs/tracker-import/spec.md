@@ -54,3 +54,16 @@ Several of these are Monday `mirror` and `board_relation` columns whose value is
 - **GIVEN** a Monday item whose "Status Report" column text contains no `http(s)://` token
 - **WHEN** the adapter builds the `ExternalProject`
 - **THEN** `details.status_report_url` is absent
+
+### Requirement: Board-listing and per-item queries share one column selection
+The Monday adapter's board-listing query (`LIST_BOARDS_QUERY`, used by bulk sync) and per-item query (`GET_ITEM_QUERY`, used by on-demand/force sync and import) MUST request an identical `column_values` field selection, including the `display_value` inline fragments for `MirrorValue` and `BoardRelationValue`. The selection MUST be defined once and reused by both queries so they cannot drift; a field added for a future Monday column MUST therefore appear in both queries automatically. The minimal fallback queries (which intentionally omit `column_values`) are exempt.
+
+#### Scenario: A newly added selection field appears in both queries
+- **GIVEN** a developer adds a field or column-type fragment to the shared `column_values` selection
+- **WHEN** the adapter issues either the board-listing query or the per-item query
+- **THEN** both queries request that field, so bulk sync and per-item sync/import resolve the column identically
+
+#### Scenario: Per-item sync and import return the same columns as bulk sync
+- **GIVEN** a Monday item with mirror and board_relation columns
+- **WHEN** the item is fetched via the board-listing query AND via the per-item query
+- **THEN** both responses include the same `column_values` selection (including `display_value`), and the resolved `details` are identical
