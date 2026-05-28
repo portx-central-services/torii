@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { endpoints } from '../api/endpoints.js';
+import { endpoints, type ProjectDetails } from '../api/endpoints.js';
 import { ApiError } from '../api/client.js';
 
-export function AllocationsPanel({
-  projectId,
-  canEdit,
-}: {
+interface AllocationsPanelProps {
   projectId: string;
   canEdit: boolean;
-}) {
+  /** Optional team field definitions to render as a read-only Team summary above allocations. */
+  teamFields?: ReadonlyArray<{ key: keyof ProjectDetails; label: string }>;
+}
+
+export function AllocationsPanel({ projectId, canEdit, teamFields = [] }: AllocationsPanelProps) {
   const queryClient = useQueryClient();
   const detail = useQuery({
     queryKey: ['project', projectId],
@@ -31,6 +32,10 @@ export function AllocationsPanel({
   if (detail.isLoading) return null;
   const allocations = detail.data?.allocations ?? [];
   const peopleById = new Map((peopleQuery.data ?? []).map((p) => [p.id, p]));
+  const projectDetails = detail.data?.details ?? {};
+  const teamRoster = teamFields
+    .map((f) => ({ label: f.label, value: projectDetails[f.key] ?? '' }))
+    .filter((t) => t.value);
 
   return (
     <section className="section-card">
@@ -46,6 +51,20 @@ export function AllocationsPanel({
           </button>
         )}
       </div>
+
+      {teamRoster.length > 0 && (
+        <div className="team-roster">
+          <div className="team-roster-label">Team</div>
+          <div className="team-roster-list">
+            {teamRoster.map((m) => (
+              <div key={m.label} className="team-roster-item">
+                <span className="team-roster-role">{m.label}</span>
+                <span className="team-roster-name">{m.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {canEdit && showAdd && (
         <AddAllocationForm

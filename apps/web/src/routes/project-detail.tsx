@@ -5,6 +5,7 @@ import { PHASES, PROJECT_STATES, type Phase, type ProjectState } from '@torii/sh
 import {
   endpoints,
   PROJECT_DETAIL_FIELDS,
+  PROJECT_DETAIL_FIELD_GROUPS,
   type MondayItemSnapshot,
   type ProjectDetail,
 } from '../api/endpoints.js';
@@ -43,6 +44,8 @@ export function ProjectDetailPage() {
   const lastSyncLabel = project.lastSyncedAt
     ? new Date(project.lastSyncedAt).toLocaleString()
     : 'Never Synced';
+  const teamFields = PROJECT_DETAIL_FIELD_GROUPS.find((g) => g.group === 'Team')?.fields ?? [];
+  const linkFields = PROJECT_DETAIL_FIELD_GROUPS.find((g) => g.group === 'Links')?.fields ?? [];
 
   return (
     <div className="page-stack">
@@ -56,152 +59,104 @@ export function ProjectDetailPage() {
 
       <section className="detail-hero">
         <div className="detail-hero-row">
-          <div className="detail-hero-title">
-            <div className="row gap-2">
-              <span className="detail-id mono">{project.id}</span>
-              {project.trackerRef && (
-                <span className="badge bg-indigo-50 text-indigo-700">
-                  {project.trackerRef.provider}
-                </span>
-              )}
-            </div>
-            <h1>{project.name}</h1>
-            <div className="detail-desc">
-              Delivery snapshot for the active phase, key dates, tracker linkage, and allocation coverage.
-            </div>
-          </div>
-          <div className="detail-hero-actions">
-            <div className="row gap-2">
+          <h1 className="detail-hero-h1">{project.name}</h1>
+          <div className="detail-hero-status">
+            <div className="status-chip">
+              <span className="status-chip-label">Phase</span>
               <PhaseBadge phase={project.phase} />
+            </div>
+            <div className="status-chip">
+              <span className="status-chip-label">State</span>
               <StateBadge state={project.state} />
             </div>
-            {project.trackerRef && isPM && <RefreshButton projectId={project.id} />}
           </div>
         </div>
 
-        <div className="hero-stat-grid">
-          <div className="hero-stat">
-            <div className="hero-stat-label">Current phase</div>
-            <div className="hero-stat-value">{project.phase}</div>
-          </div>
-          <div className="hero-stat">
-            <div className="hero-stat-label">Project state</div>
-            <div className="hero-stat-value">{project.state}</div>
-          </div>
-          <div className="hero-stat">
-            <div className="hero-stat-label">Target Go-Live</div>
-            <div className="hero-stat-value">{project.keyDates.target_go_live ?? 'TBD'}</div>
-          </div>
-          <div className="hero-stat">
-            <div className="hero-stat-label">Tracker sync</div>
-            <div className="hero-stat-value">{project.trackerRef ? 'Linked' : 'Manual'}</div>
-            <div className="hero-stat-sub">{lastSyncLabel}</div>
-          </div>
+        <ol className="timeline-h" aria-label="Delivery timeline">
+          {timeline.map((step) => (
+            <li key={step.key} className={`timeline-h-step ${step.status}`}>
+              <span className="timeline-h-marker" />
+              <span className="timeline-h-label">{step.label}</span>
+              <span className="timeline-h-date">{step.value ?? 'Not scheduled'}</span>
+            </li>
+          ))}
+        </ol>
+
+        <div className="detail-hero-team">
+          {teamFields.map((field) => (
+            <div key={field.key} className="team-row">
+              <span className="team-row-label">{field.label}</span>
+              <span className="team-row-value">{project.details?.[field.key] || '—'}</span>
+            </div>
+          ))}
+          {linkFields.map((field) => {
+            const value = project.details?.[field.key];
+            return (
+              <div key={field.key} className="team-row">
+                <span className="team-row-label">{field.label}</span>
+                <span className="team-row-value">
+                  {value ? (
+                    <a className="detail-link" href={value} target="_blank" rel="noreferrer">
+                      Open ↗
+                    </a>
+                  ) : (
+                    <span className="detail-link-empty">—</span>
+                  )}
+                </span>
+              </div>
+            );
+          })}
         </div>
       </section>
 
-      <div className="detail-grid">
-        <div className="detail-main-col">
-          <section className="section-card">
-            <div className="section-card-head">
-              <h3>Delivery timeline</h3>
-            </div>
-            <div className="timeline-list">
-              {timeline.map((step) => (
-                <div key={step.key} className={`timeline-row ${step.status}`}>
-                  <div className="timeline-marker" />
-                  <div className="timeline-body">
-                    <div className="timeline-label">{step.label}</div>
-                    <div className="timeline-meta">{step.value ?? 'Not scheduled'}</div>
-                  </div>
-                  <div className={`timeline-status ${step.status}`}>{step.status}</div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="section-card">
-            <div className="section-card-head">
-              <h3>Project settings</h3>
-            </div>
-            {isPM ? (
-              <ProjectEditorPanel project={project} />
-            ) : (
-              <ProjectReadOnlyPanel project={project} />
-            )}
-          </section>
-
-          <section className="section-card">
-            <div className="section-card-head">
-              <h3>Project details</h3>
-            </div>
-            <ProjectDetailsPanel project={project} canEdit={isPM} />
-          </section>
+      <section className="section-card">
+        <div className="section-card-head">
+          <h3>Project details</h3>
         </div>
+        <ProjectDetailsPanel project={project} canEdit={isPM} />
+      </section>
 
-        <div className="detail-side-col">
-          <section className="section-card">
-            <div className="section-card-head">
-              <h3>Tracker Sync</h3>
-            </div>
-            <div className="detail-side-list">
-              <div className="detail-side-item">
-                <span className="detail-side-label">Source</span>
-                <span className="detail-side-value">
-                  {project.trackerRef ? project.trackerRef.provider : 'No tracker linked'}
-                </span>
-              </div>
-              <div className="detail-side-item">
-                <span className="detail-side-label">External id</span>
-                <span className="detail-side-value">{project.trackerRef?.externalId ?? '—'}</span>
-              </div>
-              <div className="detail-side-item">
-                <span className="detail-side-label">Last Sync</span>
-                <span className="detail-side-value">{lastSyncLabel}</span>
-              </div>
-              <a
-                className="detail-side-link"
-                href="https://github.com/rhaning/torii/blob/main/docs/field-ownership.md"
-                target="_blank"
-                rel="noreferrer"
-                title="How Torii and the tracker share fields"
-              >
-                Field ownership guide
-              </a>
-            </div>
-          </section>
+      {isPM && (
+        <section className="section-card">
+          <div className="section-card-head">
+            <h3>Project settings</h3>
+          </div>
+          <ProjectEditorPanel project={project} />
+          <a
+            className="detail-side-link"
+            href="https://github.com/rhaning/torii/blob/main/docs/field-ownership.md"
+            target="_blank"
+            rel="noreferrer"
+            title="How Torii and the tracker share fields"
+          >
+            Field ownership guide
+          </a>
+        </section>
+      )}
 
-          <section className="section-card">
-            <div className="section-card-head">
-              <h3>Key dates</h3>
-            </div>
-            <div className="detail-side-list">
-              <div className="detail-side-item">
-                <span className="detail-side-label">Kickoff</span>
-                <span className="detail-side-value">{project.keyDates.kickoff ?? '—'}</span>
-              </div>
-              <div className="detail-side-item">
-                <span className="detail-side-label">Target Go-Live</span>
-                <span className="detail-side-value">{project.keyDates.target_go_live ?? '—'}</span>
-              </div>
-              <div className="detail-side-item">
-                <span className="detail-side-label">Actual Go-Live</span>
-                <span className="detail-side-value">{project.keyDates.actual_go_live ?? '—'}</span>
-              </div>
-              <div className="detail-side-item">
-                <span className="detail-side-label">Hypercare end</span>
-                <span className="detail-side-value">{project.keyDates.hypercare_end ?? '—'}</span>
-              </div>
-            </div>
-          </section>
-        </div>
-      </div>
-
-      <AllocationsPanel projectId={project.id} canEdit={isPM} />
+      <AllocationsPanel projectId={project.id} canEdit={isPM} teamFields={teamFields} />
 
       {project.trackerRef && (
         <MondayDetailsPanel trackerRaw={project.trackerRaw} />
       )}
+
+      <div className="detail-sync-footer">
+        <div className="detail-sync-meta">
+          <span className="detail-id mono">{project.id}</span>
+          {project.trackerRef && (
+            <>
+              <span className="badge bg-indigo-50 text-indigo-700">
+                {project.trackerRef.provider}
+              </span>
+              <span>Last sync {lastSyncLabel}</span>
+              {project.trackerRef.externalId && (
+                <span className="tracker-meta-id mono">{project.trackerRef.externalId}</span>
+              )}
+            </>
+          )}
+        </div>
+        {project.trackerRef && isPM && <RefreshButton projectId={project.id} />}
+      </div>
 
       <button
         type="button"
@@ -212,24 +167,35 @@ export function ProjectDetailPage() {
   );
 }
 
+/** Add `weeks` weeks to an ISO yyyy-mm-dd date (UTC, no timezone shift). */
+function addWeeks(iso: string, weeks: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return iso;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + weeks * 7);
+  return dt.toISOString().slice(0, 10);
+}
+
 function buildTimeline(project: ProjectDetail): TimelineStep[] {
-  const ordered = [
-    { key: 'kickoff', label: 'Kickoff', value: project.keyDates.kickoff ?? null },
-    {
-      key: 'target_go_live',
-      label: 'Target Go-Live',
-      value: project.keyDates.target_go_live ?? null,
-    },
-    {
-      key: 'actual_go_live',
-      label: 'Actual Go-Live',
-      value: project.keyDates.actual_go_live ?? null,
-    },
-    { key: 'hypercare_end', label: 'Hypercare end', value: project.keyDates.hypercare_end ?? null },
+  const kickoff = project.keyDates.kickoff ?? null;
+  const targetGoLive = project.keyDates.target_go_live ?? null;
+  const actualGoLive = project.keyDates.actual_go_live ?? null;
+  // Hypercare end defaults to (actual ?? target) + 4 weeks if not explicitly set.
+  const baseForHypercare = actualGoLive ?? targetGoLive;
+  const hypercareEnd =
+    project.keyDates.hypercare_end ?? (baseForHypercare ? addWeeks(baseForHypercare, 4) : null);
+
+  const ordered: Array<{ key: string; label: string; value: string | null }> = [
+    { key: 'kickoff', label: 'Kickoff', value: kickoff },
+    { key: 'target_go_live', label: 'Target Go-Live', value: targetGoLive },
   ];
+  // Actual Go-Live appears in the timeline only when it has been set.
+  if (actualGoLive) {
+    ordered.push({ key: 'actual_go_live', label: 'Actual Go-Live', value: actualGoLive });
+  }
+  ordered.push({ key: 'hypercare_end', label: 'Hypercare end', value: hypercareEnd });
 
   let activeAssigned = false;
-
   return ordered.map((step) => {
     if (step.value) return { ...step, status: 'done' as const };
     if (!activeAssigned) {
@@ -238,19 +204,6 @@ function buildTimeline(project: ProjectDetail): TimelineStep[] {
     }
     return { ...step, status: 'upcoming' as const };
   });
-}
-
-function ProjectReadOnlyPanel({ project }: { project: ProjectDetail }) {
-  return (
-    <div className="detail-settings-grid">
-      <KV label="Phase" value={<PhaseBadge phase={project.phase} />} />
-      <KV label="State" value={<StateBadge state={project.state} />} />
-      <KV label="Kickoff" value={project.keyDates.kickoff ?? '—'} />
-      <KV label="Target Go-Live" value={project.keyDates.target_go_live ?? '—'} />
-      <KV label="Actual Go-Live" value={project.keyDates.actual_go_live ?? '—'} />
-      <KV label="Hypercare end" value={project.keyDates.hypercare_end ?? '—'} />
-    </div>
-  );
 }
 
 function ProjectEditorPanel({ project }: { project: ProjectDetail }) {
@@ -383,8 +336,8 @@ function ProjectDetailsPanel({
   canEdit: boolean;
 }) {
   const queryClient = useQueryClient();
-  const editableFields = PROJECT_DETAIL_FIELDS.filter(
-    (f) => detailOwner(project, f.key) === 'torii',
+  const editableKeys = new Set(
+    PROJECT_DETAIL_FIELDS.filter((f) => detailOwner(project, f.key) === 'torii').map((f) => f.key),
   );
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -392,7 +345,9 @@ function ProjectDetailsPanel({
 
   function startEdit() {
     const seed: Record<string, string> = {};
-    for (const f of editableFields) seed[f.key] = project.details?.[f.key] ?? '';
+    for (const f of PROJECT_DETAIL_FIELDS) {
+      if (editableKeys.has(f.key)) seed[f.key] = project.details?.[f.key] ?? '';
+    }
     setDraft(seed);
     setErr(null);
     setEditing(true);
@@ -408,35 +363,58 @@ function ProjectDetailsPanel({
     onError: (e) => setErr(e instanceof ApiError ? e.message : 'Save failed'),
   });
 
+  // Team and Links are surfaced in the page header; this panel covers the rest.
+  const groups = PROJECT_DETAIL_FIELD_GROUPS.filter(
+    (g) => g.group !== 'Team' && g.group !== 'Links',
+  );
+
   return (
-    <div className="detail-settings-grid">
-      {PROJECT_DETAIL_FIELDS.map((field) => {
-        const value = project.details?.[field.key] ?? '';
-        const isEditable = editing && editableFields.some((f) => f.key === field.key);
-        let display: ReactNode;
-        if (isEditable) {
-          display = (
-            <input
-              className="input w-full"
-              value={draft[field.key] ?? ''}
-              onChange={(e) => setDraft((d) => ({ ...d, [field.key]: e.target.value }))}
-            />
-          );
-        } else if (!value) {
-          display = '—';
-        } else if ('isLink' in field && field.isLink) {
-          display = (
-            <a href={value} target="_blank" rel="noreferrer" className="text-torii hover:underline">
-              {value}
-            </a>
-          );
-        } else {
-          display = value;
-        }
-        return <KV key={field.key} label={field.label} value={display} />;
-      })}
-      {canEdit && editableFields.length > 0 && (
-        <div className="detail-form-actions" style={{ gridColumn: '1 / -1' }}>
+    <div className="detail-groups">
+      {groups.map(({ group, fields }) => (
+        <div key={group} className="detail-group">
+          <div className="detail-group-label">{group}</div>
+          <div className="detail-group-fields">
+            {fields.map((field) => {
+              const value = project.details?.[field.key] ?? '';
+              const isEditable = editing && editableKeys.has(field.key);
+              // Link fields render the label itself as an accented hyperlink.
+              if ('isLink' in field && field.isLink && !isEditable) {
+                return (
+                  <div key={field.key} className="detail-kv">
+                    {value ? (
+                      <a className="detail-link" href={value} target="_blank" rel="noreferrer">
+                        {field.label}
+                      </a>
+                    ) : (
+                      <>
+                        <div className="detail-kv-label">{field.label}</div>
+                        <div className="detail-kv-value">—</div>
+                      </>
+                    )}
+                  </div>
+                );
+              }
+              let display: ReactNode;
+              if (isEditable) {
+                display = (
+                  <input
+                    className="input w-full"
+                    value={draft[field.key] ?? ''}
+                    onChange={(e) => setDraft((d) => ({ ...d, [field.key]: e.target.value }))}
+                  />
+                );
+              } else if (!value) {
+                display = '—';
+              } else {
+                display = value;
+              }
+              return <KV key={field.key} label={field.label} value={display} />;
+            })}
+          </div>
+        </div>
+      ))}
+      {canEdit && editableKeys.size > 0 && (
+        <div className="detail-form-actions detail-actions-full">
           {err && <span className="text-xs text-red-700">{err}</span>}
           {editing ? (
             <>

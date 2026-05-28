@@ -76,31 +76,11 @@ body {
   gap: 10px;
 }
 
-.sidebar-brand {
-  font-family: var(--font-display);
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-
-.sidebar-brand-suffix {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ink-400);
-  border-left: 1px solid var(--ink-800);
-  padding-left: 8px;
-  line-height: 1;
-}
-
-.sidebar-section-label {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--ink-500);
-  padding: 8px 24px;
+.sidebar-logo {
+  height: 48px;
+  width: auto;
+  max-width: 100%;
+  display: block;
 }
 
 .sidebar-nav {
@@ -764,25 +744,49 @@ body {
   background: var(--portx-gradient);
 }
 
+/* Title row: project name on the left, prominent Phase / State status on the right. */
 .detail-hero-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 20px;
   flex-wrap: wrap;
 }
 
-.detail-hero-title {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 280px;
-  flex: 1;
-}
-
-.detail-hero-title h1 {
+.detail-hero-h1 {
   margin: 0;
   font-size: 26px;
+  flex: 1;
+  min-width: 280px;
+}
+
+.detail-hero-status {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.status-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.status-chip-label {
+  font-size: 11px;
+  color: var(--ink-500);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+}
+
+/* Scale the badges up to primary-status size in the header (default elsewhere stays small). */
+.status-chip .badge {
+  font-size: 15px;
+  padding: 7px 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .detail-id {
@@ -790,37 +794,29 @@ body {
   color: var(--ink-500);
 }
 
-.detail-desc {
-  font-size: 14px;
-  color: var(--ink-600);
-  line-height: 1.55;
-  max-width: 760px;
+/* A link-field label that has no URL yet, rendered as muted helper text. */
+.detail-link-empty {
+  font-size: 13px;
+  color: var(--ink-400);
 }
 
-.detail-hero-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 10px;
-}
-
-.hero-stat-grid {
+/* Project facets (team, phase, state, links) rendered as a horizontal grid across the bottom of the header card. */
+.detail-hero-team {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 14px 28px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--ink-100);
 }
 
-.hero-stat {
+.team-row {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 12px 14px;
-  background: var(--ink-25);
-  border-radius: var(--radius-md);
+  gap: 3px;
 }
 
-.hero-stat-label {
+.team-row-label {
   font-size: 11px;
   color: var(--ink-500);
   text-transform: uppercase;
@@ -828,29 +824,210 @@ body {
   font-weight: 600;
 }
 
-.hero-stat-value {
-  font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+.team-row-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-800);
 }
 
-.hero-stat-sub {
-  font-size: 11px;
-  color: var(--ink-600);
-}
-
-.detail-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+/* Sync footer at the bottom of the page: id/badge/sync meta on the left, Refresh on the right. */
+.detail-sync-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 16px;
+  padding-top: 4px;
+  flex-wrap: wrap;
 }
 
-.detail-main-col,
-.detail-side-col {
+.detail-sync-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  font-size: 11px;
+  color: var(--ink-500);
+}
+
+/* Team roster surfaced at the top of the Team allocations panel. */
+.team-roster {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 24px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed var(--ink-100);
+}
+
+.team-roster-label {
+  font-size: 11px;
+  color: var(--ink-500);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+}
+
+.team-roster-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+
+.team-roster-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.team-roster-role {
+  font-size: 11px;
+  color: var(--ink-500);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.team-roster-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-800);
+}
+
+.status-item {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 5px;
+}
+
+.status-label {
+  font-size: 11px;
+  color: var(--ink-500);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+
+.status-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-800);
+}
+
+/* Project details, organized into labeled subgroups. */
+.detail-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 22px 28px;
+}
+
+.detail-group-label {
+  font-size: 11px;
+  color: var(--ink-500);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--ink-100);
+}
+
+.detail-group-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Edit-details action spans the full details grid so it anchors bottom-right. */
+.detail-actions-full {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+}
+
+/* Accent hyperlink for link-type detail fields (Status Report, Jira Project). */
+.detail-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--portx-cyan) 62%, var(--ink-900));
+  text-decoration: none;
+}
+
+.detail-link:hover {
+  text-decoration: underline;
+}
+
+.tracker-meta-id {
+  font-size: 10px;
+  color: var(--ink-400);
+}
+
+/* Horizontal delivery timeline in the detail header — full-width focal band. */
+.timeline-h {
+  list-style: none;
+  display: flex;
+  margin: 24px 0 4px;
+  padding: 0;
+}
+
+.timeline-h-step {
+  flex: 1 1 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 4px;
+  padding-top: 30px;
+}
+
+.timeline-h-step::before {
+  content: '';
+  position: absolute;
+  top: 7px;
+  left: calc(-50% + 8px);
+  width: calc(100% - 16px);
+  height: 3px;
+  background: var(--ink-200);
+  border-radius: 2px;
+}
+
+.timeline-h-step:first-child::before {
+  display: none;
+}
+
+.timeline-h-step.done::before,
+.timeline-h-step.active::before {
+  background: color-mix(in srgb, var(--status-success) 50%, white);
+}
+
+.timeline-h-marker {
+  position: absolute;
+  top: 0;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--ink-300);
+  box-shadow: 0 0 0 3px var(--paper);
+}
+
+.timeline-h-step.done .timeline-h-marker {
+  background: var(--status-success);
+}
+
+.timeline-h-step.active .timeline-h-marker {
+  background: var(--portx-cyan);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--portx-cyan) 30%, white);
+}
+
+.timeline-h-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-900);
+}
+
+.timeline-h-date {
+  font-size: 12px;
+  color: var(--ink-600);
 }
 
 .section-card {
@@ -874,82 +1051,6 @@ body {
   font-weight: 600;
 }
 
-.timeline-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.timeline-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: var(--radius-md);
-  background: var(--ink-25);
-  border: 1px solid var(--ink-100);
-}
-
-.timeline-row.active {
-  background: color-mix(in srgb, var(--portx-mint) 10%, white);
-  border-color: color-mix(in srgb, var(--portx-mint) 35%, white);
-}
-
-.timeline-marker {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background: var(--ink-300);
-}
-
-.timeline-row.done .timeline-marker {
-  background: var(--status-success);
-}
-
-.timeline-row.active .timeline-marker {
-  background: var(--portx-cyan);
-}
-
-.timeline-body {
-  min-width: 0;
-  flex: 1;
-}
-
-.timeline-label {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.timeline-meta {
-  font-size: 12px;
-  color: var(--ink-600);
-  margin-top: 2px;
-}
-
-.timeline-status {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  border-radius: 999px;
-  padding: 4px 8px;
-}
-
-.timeline-status.done {
-  background: #ecfcf5;
-  color: var(--status-success);
-}
-
-.timeline-status.active {
-  background: #ecfbfd;
-  color: var(--portx-cyan);
-}
-
-.timeline-status.upcoming {
-  background: var(--ink-100);
-  color: var(--ink-600);
-}
 
 .detail-settings-grid {
   display: grid;
@@ -1340,10 +1441,6 @@ h3 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .hero-stat-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .signin-panel {
     grid-template-columns: 1fr;
   }
@@ -1358,10 +1455,6 @@ h3 {
   }
 
   .capacity-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .detail-grid {
     grid-template-columns: 1fr;
   }
 

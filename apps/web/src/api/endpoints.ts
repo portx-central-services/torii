@@ -20,24 +20,39 @@ export interface AuthConfig {
   providers: Array<'google' | 'okta'>;
 }
 
+/** Display order of the detail-field subgroups on the project detail page. */
+export const PROJECT_DETAIL_GROUPS = ['Team', 'Customer', 'Systems', 'Use case', 'Links'] as const;
+
+export type ProjectDetailGroup = (typeof PROJECT_DETAIL_GROUPS)[number];
+
 export const PROJECT_DETAIL_FIELDS = [
-  { key: 'project_manager', label: 'Project Manager' },
-  { key: 'solution_architect', label: 'Solution Architect' },
-  { key: 'solution_consultant', label: 'Solution Consultant' },
-  { key: 'core_solution', label: 'Core Solution' },
-  { key: 'core_vendor', label: 'Core Vendor' },
-  { key: 'primary_contact', label: 'Primary Contact' },
-  { key: 'status_report_url', label: 'Status Report', isLink: true },
-  { key: 'jira_project_url', label: 'Jira Project', isLink: true },
-  { key: 'customer_type', label: 'Customer Type' },
-  { key: 'finance_use_case', label: 'Finance - Use Case' },
-  { key: 'use_case_group', label: 'Use Case - Group' },
-  { key: 'customer_status', label: 'Customer Status' },
+  { key: 'project_manager', label: 'Project Manager', group: 'Team' },
+  { key: 'solution_architect', label: 'Solution Architect', group: 'Team' },
+  { key: 'solution_consultant', label: 'Solution Consultant', group: 'Team' },
+  { key: 'customer_type', label: 'Customer Type', group: 'Customer' },
+  { key: 'customer_status', label: 'Customer Status', group: 'Customer' },
+  { key: 'primary_contact', label: 'Primary Contact', group: 'Customer' },
+  { key: 'core_solution', label: 'Core Solution', group: 'Systems' },
+  { key: 'core_vendor', label: 'Core Vendor', group: 'Systems' },
+  { key: 'finance_use_case', label: 'Finance - Use Case', group: 'Use case' },
+  { key: 'use_case_group', label: 'Use Case - Group', group: 'Use case' },
+  { key: 'status_report_url', label: 'Status Report', group: 'Links', isLink: true },
+  { key: 'jira_project_url', label: 'Jira Project', group: 'Links', isLink: true },
 ] as const;
 
-export type ProjectDetailKey = (typeof PROJECT_DETAIL_FIELDS)[number]['key'];
+export type ProjectDetailField = (typeof PROJECT_DETAIL_FIELDS)[number];
+export type ProjectDetailKey = ProjectDetailField['key'];
 
 export type ProjectDetails = Partial<Record<ProjectDetailKey, string>>;
+
+/** The detail fields bucketed by group, in `PROJECT_DETAIL_GROUPS` order. */
+export const PROJECT_DETAIL_FIELD_GROUPS: ReadonlyArray<{
+  group: ProjectDetailGroup;
+  fields: ReadonlyArray<ProjectDetailField>;
+}> = PROJECT_DETAIL_GROUPS.map((group) => ({
+  group,
+  fields: PROJECT_DETAIL_FIELDS.filter((f) => f.group === group),
+}));
 
 /** Detail columns hidden by default until the user opts to show them. */
 export const DEFAULT_HIDDEN_DETAIL_COLUMNS: ProjectDetailKey[] = [

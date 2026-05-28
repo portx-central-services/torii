@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider.js';
+import toriiLogo from '../assets/torii-logo.svg';
 
 export function NavShell() {
   const { user, signOut } = useAuth();
@@ -18,11 +19,9 @@ export function NavShell() {
     <div className="app-shell">
       <aside className="app-sidebar">
         <div className="sidebar-brand-wrap">
-          <div className="sidebar-brand">Torii</div>
-          <span className="sidebar-brand-suffix">Delivery</span>
+          <img src={toriiLogo} alt="Torii" className="sidebar-logo" />
         </div>
 
-        <div className="sidebar-section-label">Workspace</div>
         <nav className="sidebar-nav">
           <NavLink
             to="/projects"
