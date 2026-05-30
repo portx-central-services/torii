@@ -37,7 +37,9 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerSessionHook(app, {
     db,
     cookieName: opts.env.SESSION_COOKIE_NAME,
-    enablePreviewAdminBypass: opts.env.NODE_ENV !== 'production',
+    // Activates only when the operator opts in. Defaults to false; hard-rejected by the
+    // env schema when NODE_ENV=production, so this can never fire in prod regardless.
+    enablePreviewAdminBypass: opts.env.ENABLE_PREVIEW_ADMIN_BYPASS,
   });
 
   await registerAuthRoutes(app, { db, env: opts.env });

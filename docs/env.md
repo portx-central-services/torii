@@ -21,14 +21,28 @@ A complete example lives at [`apps/api/.env.example`](../apps/api/.env.example).
 | `SESSION_COOKIE_NAME` | `torii_sess` | Cookie name for the signed session id. |
 | `WEB_BASE_URL` | `http://localhost:3000` | Used as the post-sign-in redirect target and as the redirect after a successful Monday.com OAuth callback. |
 
-## SSO
+## Sign-in (Keycloak)
+
+Torii uses the PortX Keycloak realm as the sole IdP. Google sign-in is federated upstream inside the realm — Torii itself only talks to Keycloak. The API is the OIDC client; tokens stay server-side and the browser only sees the signed `torii_sess` session cookie.
 
 | Variable | Description |
 | --- | --- |
-| `AUTH_PROVIDERS` | Comma-separated subset of `google`,`okta`. Providers not listed have no routes; their `/api/auth/<provider>` URLs return `404`. |
-| `ALLOWED_EMAIL_DOMAINS` | Comma-separated list (case-insensitive) of allowed sign-in domains. Empty means "allow any authenticated email". |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | OIDC client config; required only when `google` is enabled. Redirect URI must be `<api>/api/auth/google/callback`. |
-| `OKTA_ISSUER` / `OKTA_CLIENT_ID` / `OKTA_CLIENT_SECRET` / `OKTA_REDIRECT_URI` | OIDC client config; required only when `okta` is enabled. Issuer is the Okta org URL, e.g. `https://your-org.okta.com`. |
+| `KEYCLOAK_ISSUER` | Full realm URL, e.g. `https://auth.preview.piam.tenants.portx.io/realms/preview`. Required in production (the API exits at startup if unset). |
+| `KEYCLOAK_CLIENT_ID` | Confidential client provisioned for Torii in the realm. |
+| `KEYCLOAK_CLIENT_SECRET` | Confidential client secret. Server-side only — never exposed to the browser bundle. |
+| `KEYCLOAK_REDIRECT_URI` | Must match the value listed in the Keycloak client's "Valid Redirect URIs". Use the **web** origin (port 3000) — Vite proxies `/api/*` to the API. Local dev default: `http://localhost:3000/api/auth/keycloak/callback`. |
+| `ALLOWED_EMAIL_DOMAINS` | Comma-separated list (case-insensitive) of allowed sign-in domains. Empty disables the gate (dev only). |
+| `ADMIN_EMAILS` | Comma-separated list of emails (case-insensitive) whose `Person.isAdmin` is reconciled to `true` on every sign-in. Removing an email demotes that user on their next sign-in. |
+| `ENABLE_PREVIEW_ADMIN_BYPASS` | Dev-only synthetic admin session. Default `false`. Hard-rejected at startup when `NODE_ENV=production`. |
+
+### Required Keycloak realm configuration
+
+On the Keycloak side, the client provisioned for Torii MUST list:
+
+- **Valid Redirect URIs**: `${WEB_BASE_URL}/api/auth/keycloak/callback` (must match `KEYCLOAK_REDIRECT_URI` exactly — same scheme, host, port, and path; no trailing slash). The callback lands on the web origin so the Vite dev proxy (or the prod reverse proxy) forwards it to the API.
+- **Valid Post Logout Redirect URIs**: `${WEB_BASE_URL}/signin` (or `${WEB_BASE_URL}/*` to allowlist the entire origin). This is a separate Keycloak field from Valid Redirect URIs — allowlisting only the latter will still cause sign-out to fail with "Invalid redirect_uri".
+
+Without these, Keycloak rejects the authorize or end-session round trip with its standard "Invalid redirect_uri" error.
 
 ## Tracker integration (Monday.com)
 
@@ -58,5 +72,5 @@ openssl rand -hex 32
 
 ## What's not an env var
 
-- The provider list at sign-in is computed server-side from `AUTH_PROVIDERS` and exposed via `GET /api/auth/config`. The web client renders only the providers the API admits to.
+- Sign-in providers no longer live in env. Keycloak is the only IdP Torii talks to; Google federation is configured inside the Keycloak realm.
 - Per-project field ownership is stored in the database under `Project.field_mapping`, not in env. See [field-ownership.md](field-ownership.md).

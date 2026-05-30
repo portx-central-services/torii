@@ -3,21 +3,16 @@ import { useNavigate } from 'react-router-dom';
 import { configureApiClient } from '../api/client.js';
 import { endpoints, type MeResponse } from '../api/endpoints.js';
 
+// Dev-only synthetic admin session. Opt-in: requires the explicit flag AND a dev build,
+// AND the API to also opt in (ENABLE_PREVIEW_ADMIN_BYPASS=true). When only one side
+// enables it, `/api/me` will report unauthenticated and the user lands on /signin.
 const authBypassEnabled =
   import.meta.env.DEV &&
   import.meta.env.MODE !== 'test' &&
-  import.meta.env.VITE_DISABLE_AUTH !== 'false';
+  import.meta.env.VITE_DISABLE_AUTH === 'true';
 
 const PREVIEW_ADMIN_COOKIE = 'torii_preview_admin';
 const PREVIEW_ADMIN_COOKIE_VALUE = '1';
-
-const BYPASS_USER: NonNullable<MeResponse['user']> = {
-  id: 'dev-auth-bypass',
-  email: 'ux-preview@local.dev',
-  name: 'UX Preview',
-  role: 'PM',
-  isAdmin: true,
-};
 
 interface AuthContextValue {
   state: 'loading' | 'authenticated' | 'unauthenticated';
@@ -30,20 +25,17 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
-  const [state, setState] = useState<AuthContextValue['state']>(
-    authBypassEnabled ? 'authenticated' : 'loading',
-  );
-  const [user, setUser] = useState<AuthContextValue['user']>(authBypassEnabled ? BYPASS_USER : null);
+  const [state, setState] = useState<AuthContextValue['state']>('loading');
+  const [user, setUser] = useState<AuthContextValue['user']>(null);
 
   useEffect(() => {
     if (authBypassEnabled) {
-      // Dev-only bridge so API routes can treat UX preview as an authenticated admin.
+      // Tell the API to honor the bypass on subsequent requests; /api/me decides whether
+      // we actually end up authenticated (it depends on the API's own flag).
       document.cookie = `${PREVIEW_ADMIN_COOKIE}=${PREVIEW_ADMIN_COOKIE_VALUE}; Path=/; SameSite=Lax`;
-      configureApiClient({ onUnauthorized: () => undefined });
-      return;
+    } else {
+      document.cookie = `${PREVIEW_ADMIN_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
     }
-
-    document.cookie = `${PREVIEW_ADMIN_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
 
     configureApiClient({
       onUnauthorized: () => {
@@ -58,12 +50,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const reload = useMemo(
     () => async () => {
-      if (authBypassEnabled) {
-        setUser(BYPASS_USER);
-        setState('authenticated');
-        return;
-      }
-
       try {
         const me = await endpoints.me();
         if (me.authenticated && me.user) {
@@ -83,15 +69,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useMemo(
     () => async () => {
-      if (authBypassEnabled) {
-        document.cookie = `${PREVIEW_ADMIN_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
-        navigate('/projects', { replace: true });
-        return;
-      }
-
-      await endpoints.signout().catch(() => undefined);
+      const result = await endpoints.signout().catch(() => null);
+      // Clear any preview-admin cookie so a half-stale dev bypass doesn't leak in.
+      document.cookie = `${PREVIEW_ADMIN_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
       setUser(null);
       setState('unauthenticated');
+      // If the API returned a Keycloak end-session URL, navigate there so the IdP
+      // session ends too. Keycloak then redirects back to `/signin`.
+      if (result?.endSessionUrl) {
+        window.location.assign(result.endSessionUrl);
+        return;
+      }
       navigate('/signin', { replace: true });
     },
     [navigate],

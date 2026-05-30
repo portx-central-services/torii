@@ -45,20 +45,39 @@ pnpm dev
 
 ## Sign-in
 
-Torii uses SSO via Google or Okta. Configure one or both:
+Torii uses PortX's Keycloak realm as the sole identity provider. Google is federated upstream inside the realm — Torii itself only talks to Keycloak. The API runs the OIDC code flow server-side and issues a signed session cookie; the browser never sees access or ID tokens.
+
+### Dev with real auth (recommended)
 
 ```bash
-# .env
-AUTH_PROVIDERS=google
+# apps/api/.env
+KEYCLOAK_ISSUER=https://auth.piam.tenants.portx.io/realms/central-services
+KEYCLOAK_CLIENT_ID=torii-dev
+KEYCLOAK_CLIENT_SECRET=...                                   # from the realm
+KEYCLOAK_REDIRECT_URI=http://localhost:3000/api/auth/keycloak/callback
 ALLOWED_EMAIL_DOMAINS=portx.io
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
-GOOGLE_REDIRECT_URI=http://localhost:3001/api/auth/google/callback
+ADMIN_EMAILS=you@portx.io,teammate@portx.io                  # optional
 ```
 
-First sign-in auto-provisions the user as a `Viewer`. The seeded admin (from `ADMIN_EMAIL`) is a `PM` with `is_admin=true`.
+First sign-in provisions the user as `role=Viewer`. Emails in `ADMIN_EMAILS` are reconciled to `isAdmin=true` on every sign-in (removing an email demotes that user on their next sign-in). Promotion to `role=PM` is a Torii-side admin action (not handled by sign-in).
 
-Development note: when frontend auth bypass is enabled (the default in local dev unless `VITE_DISABLE_AUTH=false`), UX preview mode runs with admin privileges for end-to-end UI/API testing. This bypass is not enabled in production.
+The redirect lands on the **web** origin (port 3000); Vite's dev proxy forwards `/api/*` to the API. In production the web and API share an origin so the same shape works.
+
+The Keycloak client provisioned for Torii MUST list `http://localhost:3000/api/auth/keycloak/callback` under **Valid Redirect URIs** AND `http://localhost:3000/signin` (or `http://localhost:3000/*`) under **Valid Post Logout Redirect URIs** — the latter is a separate Keycloak field; allowlisting only Redirect URIs makes sign-out fail with the same "Invalid redirect_uri" error.
+
+### Dev without auth (UX-only work)
+
+When you're iterating on UI without a real session, opt into the synthetic admin bypass on BOTH sides:
+
+```bash
+# apps/api/.env
+ENABLE_PREVIEW_ADMIN_BYPASS=true
+
+# apps/web/.env.local (or the shell env when running `pnpm dev`)
+VITE_DISABLE_AUTH=true
+```
+
+Both flags default to `false`. The API flag is hard-rejected at startup when `NODE_ENV=production`.
 
 ## Monday.com integration
 

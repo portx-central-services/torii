@@ -17,7 +17,7 @@ export interface MeResponse {
 }
 
 export interface AuthConfig {
-  providers: Array<'google' | 'okta'>;
+  providers: Array<'keycloak'>;
 }
 
 /** Display order of the detail-field subgroups on the project detail page. */
@@ -162,7 +162,8 @@ export interface TrackerConnection {
 export const endpoints = {
   me: () => api.get<MeResponse>('/api/me'),
   authConfig: () => api.get<AuthConfig>('/api/auth/config'),
-  signout: () => api.post<{ ok: true }>('/api/auth/signout'),
+  signout: () =>
+    api.post<{ ok: true; endSessionUrl: string | null }>('/api/auth/signout'),
 
   listProjects: (filters: { phase?: Phase; state?: ProjectState; owner?: string; sort?: string }) =>
     api.get<Project[]>('/api/projects', filters as Record<string, string | undefined>),

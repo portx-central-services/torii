@@ -3,219 +3,163 @@
 ## Purpose
 TBD - created by archiving change add-integration-dashboard. Update Purpose after archive.
 ## Requirements
-### Requirement: App is wrapped in an OIDC AuthProvider
-The application SHALL be wrapped at its root layout in an OIDC AuthProvider that handles PKCE sign-in, redirect-callback code exchange, silent token renewal, and exposes auth state via a `useAuth()` hook to client components.
+### Requirement: Backend-driven OIDC code flow against Keycloak
+The Torii API SHALL act as a confidential OIDC client against the configured Keycloak realm. On `GET /api/auth/keycloak/login` the API SHALL redirect the user to Keycloak's authorize endpoint with a CSRF-safe `state` value (stored in a signed, HttpOnly, short-lived cookie) and a PKCE code challenge. On `GET /api/auth/keycloak/callback` the API SHALL validate the `state` against the cookie, exchange the code for tokens against Keycloak's token endpoint, verify the ID token's signature and standard claims (issuer, audience, expiry, nonce when used), and then invoke the shared `handleSignin(claims)` path with the email, name, and `email_verified` claims.
 
-#### Scenario: AuthProvider initializes on first mount
-- **WHEN** the application mounts
-- **THEN** an `AuthProvider` SHALL be present at the root of the React tree (above all routes)
-- **AND** it SHALL be configured with `authority`, `client_id`, and `redirect_uri` derived from environment variables
+Access and ID tokens MUST NOT be returned to the browser. They MAY be retained server-side only for as long as needed to perform the exchange and verification.
 
-#### Scenario: Authority is derived from tenant and env
-- **WHEN** the AuthProvider is configured
-- **THEN** the OIDC authority URL SHALL be `https://auth.${NEXT_PUBLIC_PORTX_ENV}.piam.tenants.portx.io/realms/${NEXT_PUBLIC_PORTX_TENANT_ID}`
-- **AND** the defaults when env vars are unset SHALL be `prod` for env and `preview` for tenant
-- **AND** when env is `prod` the env segment SHALL be omitted from the authority host, yielding `https://auth.piam.tenants.portx.io/realms/preview`
+#### Scenario: Login initiates the Keycloak authorize flow
+- **WHEN** an unauthenticated browser requests `GET /api/auth/keycloak/login`
+- **THEN** the API responds with a 302 redirect to the configured Keycloak realm's authorize endpoint
+- **AND** a signed `state` cookie is set
+- **AND** the redirect URL includes a PKCE `code_challenge` and the matching `state` value
 
-#### Scenario: redirect_uri is the app origin
-- **WHEN** the AuthProvider is configured
-- **THEN** `redirect_uri` SHALL be `window.location.origin` (no dedicated callback route)
-- **AND** the OIDC library SHALL strip `?code=` and `?state=` from the URL after a successful code exchange
+#### Scenario: Callback exchanges the code and creates a session
+- **GIVEN** a successful Keycloak authorize round trip with valid `code` and `state`
+- **WHEN** Keycloak redirects to `GET /api/auth/keycloak/callback?code=…&state=…`
+- **THEN** the API verifies the `state` matches the cookie, exchanges the code for tokens, verifies the ID token, and calls `handleSignin` with the resulting claims
+- **AND** if `handleSignin` returns `status: 'ok'`, the API sets the signed `torii_sess` cookie and redirects to `WEB_BASE_URL`
 
-### Requirement: Tokens are stored in sessionStorage
-The OIDC user (including the access token) SHALL be persisted in `sessionStorage` so it survives page reloads in the same tab but is cleared when the tab closes.
+#### Scenario: State mismatch rejects the callback
+- **WHEN** the `state` query parameter does not match the signed state cookie value
+- **THEN** the API returns 400 and does NOT call the token endpoint
 
-#### Scenario: Token persists across tab reload
-- **WHEN** a user signs in successfully and reloads the tab
-- **THEN** the access token SHALL still be available via `useAuth()` without prompting another sign-in
+#### Scenario: ID token verification failure rejects sign-in
+- **WHEN** the ID token's signature, issuer, or audience does not validate against the configured Keycloak issuer and client id
+- **THEN** the API returns 400 and does NOT create a Session
 
-#### Scenario: Token does not survive tab close
-- **WHEN** a user signs in and then closes the browser tab
-- **THEN** opening the application again in a new tab SHALL show the user as unauthenticated
+### Requirement: Server-side session cookie identifies the authenticated user
+After successful sign-in the API SHALL persist a `Session` row keyed by the new user's `Person.id` and issue a signed, HttpOnly `torii_sess` cookie carrying the session id. Every subsequent authenticated request SHALL be identified by reading and validating this cookie server-side; the browser never sees access or ID tokens. Cookie attributes MUST include `HttpOnly`, `SameSite=Lax`, and `Secure` when `NODE_ENV=production`, and the cookie MUST be signed using the existing `SESSION_SECRET`.
 
-### Requirement: useAuth exposes access token, user identity, and auth actions
-A client-side `useAuth()` hook SHALL expose at minimum: the current access token (string or null), the OIDC user profile claims (name, email, preferred_username, sub), an `isAuthenticated` boolean, an `isLoading` boolean, a `signinRedirect()` function, and a `signoutRedirect()` function.
+#### Scenario: Authenticated request carries the session cookie
+- **GIVEN** a signed-in user
+- **WHEN** the browser makes any request to `/api/*` with the `torii_sess` cookie
+- **THEN** the API resolves `request.user` from the `Session` + `Person` join and processes the request normally
 
-#### Scenario: Authenticated state surfaces token and user
-- **WHEN** a user has completed sign-in
-- **THEN** `useAuth()` SHALL return `isAuthenticated: true`, `isLoading: false`, the access token string, and a user object with at least `name`, `email`, and `sub`
+#### Scenario: Missing or invalid cookie yields unauthenticated
+- **WHEN** a request reaches `/api/*` without a valid `torii_sess` cookie
+- **THEN** the API processes the request as unauthenticated; protected routes return 401
 
-#### Scenario: Unauthenticated state surfaces no token
-- **WHEN** there is no signed-in user
-- **THEN** `useAuth()` SHALL return `isAuthenticated: false` and the access token SHALL be `null`
+#### Scenario: Tokens are not exposed to the browser
+- **WHEN** a sign-in completes
+- **THEN** no access token, ID token, or refresh token appears in any response body, header (other than `Set-Cookie`), URL fragment, or browser-readable storage
 
-#### Scenario: Loading state during code exchange
-- **WHEN** the AuthProvider is exchanging an authorization code at the redirect URI
-- **THEN** `useAuth()` SHALL return `isLoading: true` until the exchange resolves
+### Requirement: Person provisioning on first sign-in
+On every successful sign-in the system SHALL upsert a `Person` row by lowercased email: creating it with `role = Viewer` and the claims-provided `name` on first sign-in, and updating `name` on subsequent sign-ins. Promotion to `role = PM` MUST NOT occur automatically as part of sign-in; it is a Torii-side operation by an admin.
 
-### Requirement: RequireAuth wrapper guards authenticated routes
-A `<RequireAuth>` client component SHALL wrap the authenticated portion of the app (`app/portal/**`). When the user is unauthenticated, RequireAuth SHALL save the current path, invoke `auth.signinRedirect()`, and render `<SigninShell state={{ kind: "signing-in" }} />` while waiting.
+#### Scenario: First sign-in creates a Viewer
+- **GIVEN** a Keycloak user whose email has never signed in to Torii before
+- **WHEN** their sign-in completes
+- **THEN** a new `Person` row is created with `role = Viewer`. Torii does NOT gate sign-in on the upstream `email_verified` claim — Keycloak is the sole IdP-of-trust and `ALLOWED_EMAIL_DOMAINS` provides the access gate (the right place to enforce email verification is the realm's identity-provider "Trust Email" setting)
 
-#### Scenario: Authenticated user passes through
-- **WHEN** an authenticated user navigates to a route under `<RequireAuth>`
-- **THEN** the wrapped children SHALL render normally
+#### Scenario: Subsequent sign-in updates name only
+- **GIVEN** an existing `Person` with `role = PM`
+- **WHEN** they sign in again
+- **THEN** the `Person.name` is updated from the claims but `Person.role` is NOT changed
 
-#### Scenario: Unauthenticated user is redirected to sign in
-- **WHEN** an unauthenticated user navigates to a route under `<RequireAuth>`
-- **THEN** `saveRedirectPath()` SHALL be invoked
-- **AND** `auth.signinRedirect()` SHALL be invoked exactly once per mount
-- **AND** the user SHALL be sent to the Keycloak sign-in page
+### Requirement: Email-domain gate restricts sign-in
+The `ALLOWED_EMAIL_DOMAINS` environment variable SHALL be a comma-separated allowlist of email domains. When non-empty, sign-in MUST be rejected for any email whose domain (case-insensitive) is not in the list; rejection MUST happen before any `Person` row is created or updated. When the list is empty, the gate is disabled (for dev/test convenience).
 
-#### Scenario: Loading state renders SigninShell
-- **WHEN** `useAuth()` reports `isLoading: true` (e.g., during code exchange)
-- **THEN** `<RequireAuth>` SHALL render `<SigninShell state={{ kind: "signing-in" }} />`
-- **AND** SHALL NOT trigger another sign-in redirect
+#### Scenario: Allowed domain proceeds
+- **GIVEN** `ALLOWED_EMAIL_DOMAINS="portx.io"` and a Keycloak user `alice@portx.io`
+- **WHEN** sign-in completes
+- **THEN** the Person is upserted and a Session is created
 
-#### Scenario: Auth error with no user loaded renders SigninShell error
-- **WHEN** `auth.error` is set AND `auth.user` is null
-- **THEN** `<RequireAuth>` SHALL render `<SigninShell state={{ kind: "error", message: auth.error.message }} />`
-- **AND** SHALL NOT invoke `signinRedirect` automatically
+#### Scenario: Disallowed domain is rejected
+- **GIVEN** `ALLOWED_EMAIL_DOMAINS="portx.io"` and a Keycloak user `eve@example.com`
+- **WHEN** the API processes the callback claims
+- **THEN** no Person row is created or updated, no Session is issued, and the API responds with a sign-in-failed indicator
 
-#### Scenario: Pending sign-out renders SigninShell signing-out
-- **WHEN** `isSignoutPending()` returns `true` (the user just clicked Sign out and the round-trip has not yet completed)
-- **THEN** `<RequireAuth>` SHALL render `<SigninShell state={{ kind: "signing-out" }} />`
-- **AND** SHALL NOT invoke `signinRedirect` automatically (auto-signin is suppressed for the duration of the pending flag)
+### Requirement: Admin allowlist sets Person.isAdmin
+The `ADMIN_EMAILS` environment variable SHALL be a comma-separated allowlist of emails that confer admin privileges. On every successful sign-in the API SHALL reconcile `Person.isAdmin` to `true` if and only if the user's email (case-insensitive) appears in `ADMIN_EMAILS`. The role itself (`PM`/`Viewer`) is unaffected by this reconciliation.
 
-### Requirement: authedFetch helper attaches the bearer token
-A shared `authedFetch(input, init?)` helper SHALL wrap the native `fetch` API to attach the current access token as an `Authorization: Bearer <token>` header on every request.
+#### Scenario: Email in allowlist becomes admin on sign-in
+- **GIVEN** `ADMIN_EMAILS="alice@portx.io"` and a Person whose `isAdmin` is `false`
+- **WHEN** Alice signs in
+- **THEN** her `Person.isAdmin` is updated to `true` and her session reflects admin
 
-#### Scenario: Authorization header is added when authenticated
-- **WHEN** a caller invokes `authedFetch(url)` while authenticated
-- **THEN** the outgoing request SHALL include `Authorization: Bearer <accessToken>`
+#### Scenario: Email removed from allowlist is demoted on next sign-in
+- **GIVEN** a previously-admin Person whose email is no longer in `ADMIN_EMAILS`
+- **WHEN** they sign in again
+- **THEN** their `Person.isAdmin` is updated to `false`
 
-#### Scenario: Existing headers are preserved
-- **WHEN** a caller invokes `authedFetch(url, { headers: { 'X-Foo': 'bar' } })`
-- **THEN** the outgoing request SHALL include both `X-Foo: bar` and the `Authorization: Bearer …` header
+### Requirement: Web sign-in surface and route guard
+The web app SHALL render a sign-in screen at `/signin` containing a single primary action that navigates the browser to `GET /api/auth/keycloak/login`. All other routes in the web app SHALL be wrapped in a guard that, when `GET /api/me` reports unauthenticated, redirects the user to `/signin`. The sign-in screen MUST be the only publicly reachable route.
 
-#### Scenario: 401 response triggers re-authentication
-- **WHEN** `authedFetch` receives an HTTP 401 response
-- **THEN** it SHALL invoke `signinRedirect()` once
-- **AND** the original `Response` SHALL still be returned to the caller so they can render an error state if desired
+#### Scenario: Unauthenticated user is routed to sign-in
+- **GIVEN** a browser with no `torii_sess` cookie
+- **WHEN** the user opens any non-`/signin` route in the web app
+- **THEN** the app redirects to `/signin` and the user does NOT see protected content
 
-### Requirement: Sign out ends the OIDC session
-Invoking sign-out from the user profile dropdown SHALL terminate the OIDC session at the IdP and return the user to the bare app origin. The OIDC library SHALL handle token revocation and user-store cleanup via `revokeTokensOnSignout: true`. Application code SHALL NOT manually iterate `sessionStorage` to remove `oidc.user:*` entries.
+#### Scenario: Sign-in button initiates the Keycloak flow
+- **WHEN** the user clicks the primary action on `/signin`
+- **THEN** the browser navigates to `GET /api/auth/keycloak/login`, which redirects to Keycloak
 
-#### Scenario: User clicks Sign out
-- **WHEN** an authenticated user clicks "Sign out" in the user profile dropdown
-- **THEN** the click handler SHALL invoke `markSignoutPending()` (sets `sessionStorage["auth_signout_pending"] = "1"`) before calling `auth.signoutRedirect()`
-- **AND** `signoutRedirect()` SHALL be called
-- **AND** the OIDC session at the authority SHALL be ended
-- **AND** the user SHALL land back at `${origin}` (the bare app origin), which re-enters the unauth flow
-- **AND** the unauth surface SHALL render `<SigninShell signing-out>` while the pending flag is set
-- **AND** once auth state stabilizes at the unauth branch, the surface SHALL clear the pending flag and invoke `auth.signinRedirect({ prompt: "login" })` so Keycloak displays its credential form (preventing silent re-auth via any surviving upstream SSO; see capability `auth-recovery`)
+#### Scenario: Authenticated user lands on the requested route
+- **GIVEN** a successful Keycloak round trip
+- **WHEN** the API redirects back to `WEB_BASE_URL`
+- **THEN** the web app finds a valid session via `/api/me` and renders the requested page
 
-#### Scenario: Tokens are revoked by the library
-- **WHEN** `signoutRedirect()` is invoked with `revokeTokensOnSignout: true` set on the AuthProvider
-- **THEN** the library SHALL POST to the IdP's revocation endpoint for the access and refresh tokens
-- **AND** the library SHALL clear its own user-store entry
-- **AND** application code SHALL NOT additionally iterate `sessionStorage` keys to remove OIDC-prefixed entries
+### Requirement: Sign-out ends both the Torii session and the Keycloak SSO session
+The API SHALL expose `POST /api/auth/signout` which deletes the current `Session` row, clears the `torii_sess` cookie, and returns a Keycloak end-session URL configured with `post_logout_redirect_uri = ${WEB_BASE_URL}/signin`. The web app SHALL navigate the browser to that returned URL after the local cookie is cleared. Calling sign-out without an active session MUST be idempotent (no error).
 
-### Requirement: Configuration is sourced from public env vars
-The OIDC authority, client id, tenant id, and API base URLs SHALL be derived from `NEXT_PUBLIC_*` environment variables that resolve at build time. The dead `postLogoutRedirectUri()` helper SHALL be removed (no callers). The dead `oidcRedirectUri()` env-var hatch SHALL also be removed (no callers; with `localhost:3000` on the realm's Valid Redirect URIs, `window.location.origin` always works without an override).
+#### Scenario: Sign-out clears local session and redirects to Keycloak end-session
+- **GIVEN** a signed-in user
+- **WHEN** the web app calls `POST /api/auth/signout`
+- **THEN** the response clears the `torii_sess` cookie and includes an end-session URL pointing at Keycloak with `post_logout_redirect_uri` set to the sign-in screen
+- **AND** the `Session` row is deleted from the database
 
-#### Scenario: Config module exposes derived URLs
-- **WHEN** application code imports the auth config module
-- **THEN** it SHALL receive at minimum: `tenantId`, `appEnv`, `oidcAuthority`, `oidcClientId`, `apiCatalogBaseUrl`
-- **AND** it SHALL NOT export a `postLogoutRedirectUri()` helper (the value is `${origin}` at runtime, set inline in the AuthProvider config)
-- **AND** it SHALL NOT export an `oidcRedirectUri()` helper or honor a `NEXT_PUBLIC_OIDC_REDIRECT_URI` env var; the AuthProvider SHALL set `redirect_uri: window.location.origin` directly
+#### Scenario: Sign-out without a session is a no-op
+- **WHEN** an unauthenticated client calls `POST /api/auth/signout`
+- **THEN** the API responds 200 with no side effects
 
-#### Scenario: Defaults apply when env vars are unset
-- **WHEN** none of `NEXT_PUBLIC_PORTX_TENANT_ID`, `NEXT_PUBLIC_PORTX_ENV`, or `NEXT_PUBLIC_OIDC_CLIENT_ID` are set
-- **THEN** the defaults SHALL be `preview`, `prod`, and `portal-ui` respectively
-- **AND** the resulting authority SHALL be `https://auth.piam.tenants.portx.io/realms/preview` (prod-collapse removes the env segment)
-- **AND** the resulting API Catalog base SHALL be the relative path `/api-catalog-proxy/api-catalog/1.0`
+### Requirement: Auth configuration via server-side env vars
+The API SHALL read all OIDC configuration from server-side environment variables at startup: `KEYCLOAK_ISSUER` (full realm URL), `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`, `KEYCLOAK_REDIRECT_URI`, plus the existing `ALLOWED_EMAIL_DOMAINS`, `SESSION_SECRET`, `SESSION_COOKIE_NAME`, and `WEB_BASE_URL`, and the new `ADMIN_EMAILS`. The previously declared `GOOGLE_*`, `OKTA_*`, and `AUTH_PROVIDERS` env vars MUST be removed (no longer read or referenced) since Keycloak is the sole IdP and Google is brokered upstream by Keycloak. None of these variables MAY be prefixed `VITE_` or otherwise exposed to the browser bundle.
 
-### Requirement: Local dev server runs on a port the realm allowlists
-The dev script SHALL launch the Next.js dev server on a port included in the active realm's Valid Redirect URIs and Valid Post Logout Redirect URIs. The default-target `preview` realm (on the prod Keycloak instance) allowlists `http://localhost:3000` and `http://localhost:3000/*` in addition to other entries. `pnpm dev` SHALL therefore use Next.js's default port (`3000`) without an explicit `-p` flag. Devs targeting a different tenant or env via `.env.local` are responsible for ensuring that realm's `portal-ui` client also allowlists `http://localhost:3000`.
+#### Scenario: Missing Keycloak issuer fails fast in production
+- **GIVEN** `NODE_ENV=production` and `KEYCLOAK_ISSUER` is unset or empty
+- **WHEN** the API starts
+- **THEN** the process exits with a non-zero status and a clear error mentioning `KEYCLOAK_ISSUER`
 
-#### Scenario: pnpm dev binds to 3000 by default
-- **WHEN** a developer runs `pnpm dev`
-- **THEN** the Next.js dev server SHALL listen on port `3000` (the framework default) and `redirect_uri` SHALL evaluate to `http://localhost:3000`
-- **AND** Keycloak SHALL accept the authorize request without an "Invalid parameter: redirect_uri" error
+#### Scenario: Removed env vars are not consulted
+- **WHEN** the API code is searched for references to `GOOGLE_CLIENT_ID`, `OKTA_ISSUER`, or `AUTH_PROVIDERS`
+- **THEN** no such reference exists (other than in archived changes or this REMOVED record)
 
-#### Scenario: package.json dev script is unpinned
-- **WHEN** the `scripts.dev` entry of `package.json` is read
-- **THEN** the value SHALL be `next dev --turbopack` (no `-p 5173`)
+### Requirement: Realm allowlists the Torii callback URL
+For Torii to complete the OIDC code flow, the Keycloak client configured for Torii MUST list `${WEB_BASE_URL}/api/auth/keycloak/callback` among its **Valid Redirect URIs** AND MUST list `${WEB_BASE_URL}/signin` (or `${WEB_BASE_URL}/*`) among its **Valid Post Logout Redirect URIs**. The callback intentionally targets the web origin — in dev the Vite proxy forwards `/api/*` to the API, and in prod the web and API share an origin — so a single allowlist entry covers both. These are operator-managed properties on the Keycloak side, not part of the Torii deploy. The Torii documentation (`docs/env.md` or the README) SHALL list these required allowlist entries alongside the `KEYCLOAK_*` env vars.
 
-### Requirement: Browser-facing API Catalog calls go through a Next.js rewrites proxy
-The browser SHALL call the API Catalog backend through a same-origin proxy path (`/api-catalog-proxy/...`) configured via Next.js `rewrites()` in `next.config.js`. The proxy SHALL forward to `https://api-catalog-backend.${env}.piam.tenants.portx.io` and SHALL pass headers (including `Authorization`) through unchanged. When env is `prod`, the env segment SHALL be omitted from the destination host.
+#### Scenario: Operator setup is documented
+- **WHEN** an operator reads the Torii deploy docs
+- **THEN** they find an explicit list of required Keycloak realm-client allowlist entries and matching env vars
 
-#### Scenario: Browser request stays same-origin
-- **WHEN** application code calls `authedFetch('/api-catalog-proxy/api-catalog/1.0/tenants/<tenant>/assets')`
-- **THEN** the network request from the browser SHALL go to the application's own origin (e.g., `http://localhost:3000/api-catalog-proxy/...`)
-- **AND** Next.js SHALL rewrite the request server-side to `https://api-catalog-backend.${env}.piam.tenants.portx.io/api-catalog/1.0/tenants/<tenant>/assets` (or `https://api-catalog-backend.piam.tenants.portx.io/...` when env is `prod`)
+#### Scenario: Missing allowlist surfaces a recognizable error
+- **GIVEN** the Keycloak client does not include Torii's callback URL
+- **WHEN** a user attempts to sign in
+- **THEN** Keycloak returns its standard "Invalid redirect_uri" error and the Torii API logs the failure (no Person or Session is created)
 
-#### Scenario: Bearer token reaches the real backend
-- **WHEN** the rewritten request is forwarded
-- **THEN** the `Authorization: Bearer <token>` header SHALL be preserved on the upstream request
+### Requirement: Dev preview-admin bypass is opt-in only
+The pre-existing dev preview-admin bypass (synthetic admin session in dev) MUST default OFF. Enabling it requires BOTH the web app build flag `VITE_DISABLE_AUTH=true` AND the API env flag `ENABLE_PREVIEW_ADMIN_BYPASS=true`. When `NODE_ENV=production` the API env flag MUST be rejected at startup, and the API MUST NOT honor the `torii_preview_admin` cookie in production regardless of any other setting.
 
-#### Scenario: Default env determines the proxy target
-- **WHEN** `PORTX_ENV` is unset
-- **THEN** the rewrite destination SHALL resolve to `https://api-catalog-backend.piam.tenants.portx.io/...` (env defaults to `prod`, which prod-collapses the env segment)
+#### Scenario: Default dev start uses real auth
+- **GIVEN** a developer runs the dev stack without setting the bypass env vars
+- **WHEN** they open the web app
+- **THEN** they see the sign-in screen and must authenticate via Keycloak
 
-### Requirement: Only authenticated portal routes are guarded
-The `<RequireAuth>` wrapper SHALL guard only routes under `/portal/**`. The `/api-docs` route SHALL remain publicly accessible without an OIDC session. The previously-public `/login` route no longer exists (Next.js renders 404).
+#### Scenario: Bypass requires both web and API flags
+- **GIVEN** only one of `VITE_DISABLE_AUTH` or `ENABLE_PREVIEW_ADMIN_BYPASS` is set
+- **WHEN** the developer opens the app
+- **THEN** they see the sign-in screen (the bypass does not activate)
 
-#### Scenario: Unauthenticated user can reach /api-docs
-- **WHEN** an unauthenticated user navigates to `/api-docs`
-- **THEN** the API Consumer Portal SHALL render without redirecting away (it is intentionally public for consumer-facing docs)
+#### Scenario: Bypass is hard-rejected in production
+- **GIVEN** `NODE_ENV=production` and `ENABLE_PREVIEW_ADMIN_BYPASS=true`
+- **WHEN** the API starts
+- **THEN** the process exits with a non-zero status and a clear error
 
-#### Scenario: /login no longer exists
-- **WHEN** any user navigates to `/login`
-- **THEN** Next.js SHALL render its standard 404 page (the route was deleted with the fake-login removal; see capability `auth-page`)
+### Requirement: Tracker integrations remain independent of user sign-in
+Tracker connections (currently Monday, future Jira) MUST continue to use their own provider-specific OAuth flows scoped to the tracker connection itself; user sign-in via Keycloak MUST NOT be required to share or impersonate a tracker authorization, and no Keycloak access/ID token MAY be forwarded to a tracker provider.
 
-### Requirement: AuthProvider config sets post_logout_redirect_uri to bare origin
-The OIDC AuthProvider SHALL set `post_logout_redirect_uri: ${window.location.origin}` (no path suffix).
-
-#### Scenario: Config sets bare-origin post-logout URI
-- **WHEN** the AuthProvider initializes
-- **THEN** `post_logout_redirect_uri` SHALL equal `window.location.origin` exactly
-- **AND** SHALL NOT include `/login` or any other path
-
-### Requirement: AuthProvider config enables silent renewal via static callback
-The OIDC AuthProvider SHALL set `silent_redirect_uri: ${origin}/silent-callback.html`. A static `public/silent-callback.html` SHALL be present. The Keycloak realm's `Valid Redirect URIs` allowlist for the `portal-ui` client SHALL include the silent-callback URL.
-
-#### Scenario: silent_redirect_uri is configured
-- **WHEN** the AuthProvider initializes
-- **THEN** the config SHALL include `silent_redirect_uri: ${window.location.origin}/silent-callback.html`
-
-#### Scenario: Static silent-callback page exists
-- **WHEN** the dev server or production build serves static assets
-- **THEN** `silent-callback.html` SHALL be served at the app origin
-- **AND** SHALL invoke the OIDC library's `signinSilentCallback()` helper
-
-### Requirement: AuthProvider config enables token revocation on signout
-The OIDC AuthProvider SHALL set `revokeTokensOnSignout: true`. Manual `oidc.user:*` storage cleanup helpers SHALL NOT exist in application code.
-
-#### Scenario: revokeTokensOnSignout is set
-- **WHEN** the AuthProvider initializes
-- **THEN** the config SHALL include `revokeTokensOnSignout: true`
-
-#### Scenario: Manual cleanup helper is absent
-- **WHEN** application code is searched for iterations over `sessionStorage` looking for `oidc.user:` keys
-- **THEN** no such iteration SHALL exist (the previous `clearOidcSessionStorage` helper in `app-sidebar.tsx` SHALL be removed)
-
-### Requirement: Token-expired-at-mount attempts silent renewal first
-When the AuthProvider's TokenSync detects an expired access token at mount, it SHALL attempt `auth.signinSilent()` once before falling back to `auth.signoutRedirect()`.
-
-#### Scenario: Silent renewal succeeds for stale token
-- **WHEN** TokenSync mounts and `auth.user.profile.exp` is in the past
-- **AND** the refresh token (or IdP iframe session) is still valid
-- **THEN** `auth.signinSilent()` SHALL resolve with a fresh user
-- **AND** the lib's `addUserLoaded` handler SHALL propagate the new access token via `setAccessToken`
-- **AND** the user SHALL NOT see a redirect
-
-#### Scenario: Silent renewal fails for stale token
-- **WHEN** TokenSync mounts and `auth.user.profile.exp` is in the past
-- **AND** `auth.signinSilent()` rejects (e.g., refresh token revoked, IdP session expired)
-- **THEN** TokenSync SHALL invoke `auth.signoutRedirect()`
-- **AND** SHALL log the failure via `console.error` with prefix `[auth]`
-
-### Requirement: Auth recovery is environment-uniform
-The TokenSync recovery state machine SHALL behave identically on `localhost` and on deployed origins. There SHALL NOT be an `isLocalDev` or hostname-based branch that suppresses recovery actions.
-
-#### Scenario: Localhost behaves like deployed
-- **WHEN** an `auth.error` or `silentRenewError` occurs on `localhost`
-- **THEN** the same recovery action SHALL fire as on a deployed origin
-- **AND** the same `<SigninShell>` UI SHALL render
+#### Scenario: Monday OAuth is unchanged by Keycloak sign-in
+- **GIVEN** a Torii admin signed in via Keycloak
+- **WHEN** they connect a Monday workspace
+- **THEN** the existing Monday OAuth flow runs (Torii is the OAuth client; Monday's authorize/callback flow is independent of the Keycloak session)
 

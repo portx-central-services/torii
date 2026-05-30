@@ -1,20 +1,26 @@
 import { Issuer, type Client } from 'openid-client';
 
-export interface OidcProviderConfig {
-  name: 'google' | 'okta';
+/** Connection settings for Torii's confidential Keycloak client. */
+export interface KeycloakConfig {
+  /** Full realm URL, e.g. https://auth.preview.piam.tenants.portx.io/realms/preview */
   issuerUrl: string;
   clientId: string;
   clientSecret: string;
   redirectUri: string;
 }
 
-const cache = new Map<string, Promise<Client>>();
+let cached: Promise<Client> | null = null;
+let cachedKey = '';
 
-export function getOidcClient(config: OidcProviderConfig): Promise<Client> {
-  const cacheKey = `${config.name}:${config.clientId}`;
-  let entry = cache.get(cacheKey);
-  if (!entry) {
-    entry = (async () => {
+/**
+ * Discover the Keycloak realm metadata and return a typed OIDC client. The
+ * discovery doc is cached per (issuer, clientId) pair for the process lifetime.
+ */
+export function getKeycloakClient(config: KeycloakConfig): Promise<Client> {
+  const key = `${config.issuerUrl}|${config.clientId}`;
+  if (!cached || cachedKey !== key) {
+    cachedKey = key;
+    cached = (async () => {
       const issuer = await Issuer.discover(config.issuerUrl);
       return new issuer.Client({
         client_id: config.clientId,
@@ -23,11 +29,11 @@ export function getOidcClient(config: OidcProviderConfig): Promise<Client> {
         response_types: ['code'],
       });
     })();
-    cache.set(cacheKey, entry);
   }
-  return entry;
+  return cached;
 }
 
-export function clearOidcClientCache(): void {
-  cache.clear();
+export function clearKeycloakClientCache(): void {
+  cached = null;
+  cachedKey = '';
 }
