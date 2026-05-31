@@ -11,11 +11,13 @@ datasource db {
 }
 
 enum Phase {
-  Discovery
-  Build
+  Backlog
+  Initiation
+  Design
+  Development
   UAT
-  Launch
-  Hypercare
+  GoLiveReadiness
+  Production
 }
 
 enum ProjectState {
@@ -40,6 +42,26 @@ enum TrackerConnectionStatus {
   rate_limited
 }
 
+enum RagLevel {
+  Red
+  Amber
+  Green
+}
+
+enum RiskType {
+  Technical
+  Relationship
+  Schedule
+  ExternalDependency
+  Gap
+  Resourcing
+}
+
+enum RiskState {
+  Blocked
+  Inform
+}
+
 model Person {
   id                  String       @id @default(cuid())
   name                String
@@ -55,6 +77,7 @@ model Person {
   sessions            Session[]
   phaseTransitions    PhaseAuditLog[]
   preference          UserPreference?
+  riskUpdatesAuthored ProjectRiskUpdate[]
 
   @@map("people")
 }
@@ -75,7 +98,7 @@ model UserPreference {
 model Project {
   id            String       @id @default(cuid())
   name          String
-  phase         Phase        @default(Discovery)
+  phase         Phase        @default(Backlog)
   state         ProjectState @default(OnTrack)
   // { kickoff?, target_go_live?, actual_go_live?, hypercare_end? } - ISO 8601 dates as strings
   keyDates      Json         @default("{}") @map("key_dates")
@@ -91,9 +114,10 @@ model Project {
   createdAt     DateTime     @default(now()) @map("created_at")
   updatedAt     DateTime     @updatedAt @map("updated_at")
 
-  owner             Person?         @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  owner             Person?             @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: SetNull)
   allocations       Allocation[]
   phaseTransitions  PhaseAuditLog[]
+  riskUpdates       ProjectRiskUpdate[]
 
   @@map("projects")
 }
@@ -144,6 +168,31 @@ model PhaseAuditLog {
 
   @@index([projectId, at])
   @@map("phase_audit_log")
+}
+
+model ProjectRiskUpdate {
+  id               String     @id @default(cuid())
+  projectId        String     @map("project_id")
+  // Monday of the ISO week (UTC) this snapshot covers. Unique per project.
+  weekOf           DateTime   @db.Date @map("week_of")
+  ragLevel         RagLevel   @map("rag_level")
+  riskTypes        RiskType[] @map("risk_types")
+  state            RiskState
+  description      String     @default("")
+  goToGreenPlan    String     @default("") @map("go_to_green_plan")
+  latestUpdate     String     @default("") @map("latest_update")
+  nextSteps        String     @default("") @map("next_steps")
+  actionRequested  String     @default("") @map("action_requested")
+  authorId         String     @map("author_id")
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt      @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author  Person  @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, weekOf])
+  @@index([weekOf])
+  @@map("project_risk_updates")
 }
 
 model Session {

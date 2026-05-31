@@ -1467,3 +1467,386 @@ h3 {
     gap: 8px;
   }
 }
+
+/* ===== Risks page ===== */
+
+.risks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.risk-card {
+  border: 1px solid var(--ink-100);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  background: var(--ink-25);
+}
+
+.risk-card.past {
+  background: var(--paper);
+}
+
+.risk-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.risk-card-head.as-button {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.risk-card-week {
+  font-size: 12px;
+  color: var(--ink-500);
+}
+
+.risk-card-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.risk-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.risk-field-label {
+  font-size: 11px;
+  color: var(--ink-500);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.risk-field-value {
+  font-size: 13px;
+  color: var(--ink-900);
+  white-space: pre-wrap;
+}
+
+.risk-history {
+  margin-top: 12px;
+}
+
+.risk-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.risk-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.risk-type-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 4px 12px;
+  margin-top: 4px;
+}
+
+.risk-type-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+/* RAG chips + arrow */
+
+.rag-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.rag-red {
+  background: #fef2f2;
+  color: var(--status-danger);
+}
+
+.rag-amber {
+  background: #fff7ed;
+  color: var(--status-warning);
+}
+
+.rag-green {
+  background: #ecfcf5;
+  color: var(--status-success);
+}
+
+.rag-arrow {
+  font-size: 11px;
+  color: var(--ink-500);
+  font-weight: 600;
+}
+
+.rag-arrow-worse {
+  color: var(--status-danger);
+}
+
+.rag-arrow-better {
+  color: var(--status-success);
+}
+
+/* ===== Timeline page ===== */
+
+.timeline-kpis {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+  padding: 12px;
+}
+
+.timeline-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--ink-100);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+}
+
+.timeline-kpi-accent {
+  border-color: var(--accent, #0ea5e9);
+}
+
+.timeline-kpi-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-500);
+}
+
+.timeline-kpi-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--ink-900);
+  line-height: 1.1;
+}
+
+.timeline-person-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.timeline-person-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 0 4px;
+  border-bottom: 1px dashed var(--ink-200);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-900);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.timeline-person-count {
+  font-weight: 400;
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink-500);
+}
+
+.timeline-role-badge {
+  display: inline-block;
+  flex-shrink: 0;
+  min-width: 26px;
+  padding: 1px 5px;
+  margin-right: 8px;
+  border-radius: 3px;
+  background: var(--ink-100);
+  color: var(--ink-700);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+.timeline-row-label-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-chart {
+  padding: 16px 16px 20px;
+  overflow: hidden;
+}
+
+.timeline-axis {
+  position: relative;
+  height: 28px;
+  margin-left: 220px; /* matches .timeline-row-label width */
+  border-bottom: 1px dashed var(--ink-200);
+  margin-bottom: 8px;
+}
+
+.timeline-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: var(--ink-500);
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 4px;
+}
+
+.timeline-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.timeline-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: transparent;
+  border: 0;
+  padding: 4px 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.timeline-row:hover {
+  background: var(--ink-50);
+}
+
+.timeline-row-label {
+  width: 220px;
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-900);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 8px;
+}
+
+.timeline-row-track {
+  position: relative;
+  flex: 1;
+  height: 26px;
+  background: var(--ink-50);
+  border-radius: var(--radius-sm);
+}
+
+.timeline-bar {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  min-width: 12px;
+}
+
+.timeline-bar-phase {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.timeline-bar-risk {
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--paper);
+}
+
+.timeline-bar-budget {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  font-weight: 700;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ink-900);
+  color: var(--paper);
+  display: grid;
+  place-items: center;
+}
+
+/*
+ * Clipped-edge dashed borders: drawn when the project's real `project_start` is
+ * before the visible window OR `target_go_live` is after it. Signals "extends
+ * beyond" — distinct from a missing date, which renders with a clean edge.
+ */
+.timeline-bar-clipped-left {
+  border-left: 2px dashed rgba(0, 0, 0, 0.55);
+}
+.timeline-bar-clipped-right {
+  border-right: 2px dashed rgba(0, 0, 0, 0.55);
+}
+
+/*
+ * Vertical "today" line spanning the rows area. The 232px offset = 220px label
+ * column + 12px gap (see `.timeline-row-label` width and `.timeline-row` gap);
+ * the React component computes the percent across the remaining track width.
+ */
+.timeline-rows {
+  position: relative;
+}
+.timeline-today-line {
+  position: absolute;
+  top: -8px;
+  bottom: 0;
+  width: 2px;
+  background: #0ea5e9;
+  transform: translateX(-1px);
+  pointer-events: none;
+  z-index: 4;
+}
+.timeline-today-label {
+  position: absolute;
+  top: -14px;
+  left: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #0369a1;
+  background: var(--paper);
+  padding: 1px 4px;
+  border-radius: 2px;
+  white-space: nowrap;
+}

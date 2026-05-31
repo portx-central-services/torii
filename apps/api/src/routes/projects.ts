@@ -7,6 +7,8 @@ import {
   ProjectListFilterSchema,
   KeyDatesSchema,
   ProjectDetailsSchema,
+  deriveProjectType,
+  type ProjectDetails,
   ValidationError,
   NotFoundError,
 } from '@torii/shared';
@@ -15,14 +17,17 @@ import { requireUser, requirePM } from '../plugins/guards.js';
 
 const idParams = z.object({ id: z.string().min(1) });
 
-function serializeProject(p: Project) {
+export function serializeProject(p: Project) {
+  const details = (p.details ?? {}) as ProjectDetails;
   return {
     id: p.id,
     name: p.name,
     phase: p.phase,
     state: p.state,
     keyDates: p.keyDates,
-    details: p.details ?? {},
+    details,
+    /** Derived from `details.fintech_parent`; not a persisted column. */
+    projectType: deriveProjectType(details as Record<string, unknown>),
     ownerId: p.ownerId,
     trackerRef: p.trackerRef,
     fieldMapping: p.fieldMapping,
@@ -105,7 +110,7 @@ export function registerProjectRoutes(
     const created = await db.project.create({
       data: {
         name: input.name,
-        phase: input.phase ?? Phase.Discovery,
+        phase: input.phase ?? Phase.Backlog,
         state: input.state ?? ProjectState.OnTrack,
         keyDates: input.keyDates ?? {},
         details: input.details ?? {},
@@ -147,13 +152,13 @@ export function registerProjectRoutes(
       nextDetails = validated.data;
     }
 
-    // Auto-Done rule: advancing to Hypercare with actual_go_live set ⇒ state=Done
+    // Auto-Done rule: advancing to Production with actual_go_live set ⇒ state=Done
     // unless caller explicitly passed state.
     let nextState = input.state ?? existing.state;
     const phaseChanging = input.phase && input.phase !== existing.phase;
     if (
       input.state === undefined &&
-      input.phase === Phase.Hypercare &&
+      input.phase === Phase.Production &&
       (nextKeyDates.actual_go_live ?? (existing.keyDates as Record<string, string | undefined>).actual_go_live)
     ) {
       nextState = ProjectState.Done;

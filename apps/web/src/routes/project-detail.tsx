@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { PHASES, PROJECT_STATES, type Phase, type ProjectState } from '@torii/shared';
+import { PHASES, PROJECT_STATES, phaseLabel, type Phase, type ProjectState } from '@torii/shared';
 import {
   endpoints,
   PROJECT_DETAIL_FIELDS,
@@ -262,7 +262,7 @@ function ProjectEditorPanel({ project }: { project: ProjectDetail }) {
           <select className="input w-full" value={phase} onChange={(e) => setPhase(e.target.value as Phase)}>
             {PHASES.map((p) => (
               <option key={p} value={p}>
-                {p}
+                {phaseLabel(p)}
               </option>
             ))}
           </select>

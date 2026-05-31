@@ -14,6 +14,8 @@ import { registerAllocationRoutes } from './routes/allocations.js';
 import { registerCapacityRoutes } from './routes/capacity.js';
 import { registerTrackerRoutes } from './routes/tracker.js';
 import { registerPreferencesRoutes } from './routes/preferences.js';
+import { registerRiskRoutes } from './routes/risks.js';
+import { registerRiskUpdateRoutes } from './routes/risk-updates.js';
 import { setupSync } from './sync/setup.js';
 import { getPrisma, type DB } from './db.js';
 import type { Env } from './env.js';
@@ -48,6 +50,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerAllocationRoutes(app, { db });
   registerCapacityRoutes(app, { db });
   registerPreferencesRoutes(app, { db });
+  registerRiskRoutes(app, { db });
+  registerRiskUpdateRoutes(app, { db });
 
   const engine = setupSync({
     db,

@@ -208,7 +208,7 @@ describe('allocations routes', () => {
           pct: 50,
           start: new Date('2026-06-01'),
           end: new Date('2026-08-31'),
-          project: { name: 'Acme', phase: 'Build', state: 'OnTrack' },
+          project: { name: 'Acme', phase: 'Development', state: 'OnTrack' },
         },
       ]);
       const r = await app.inject({
@@ -224,7 +224,7 @@ describe('allocations routes', () => {
           pct: 50,
           start: '2026-06-01',
           end: '2026-08-31',
-          project: { name: 'Acme', phase: 'Build', state: 'OnTrack' },
+          project: { name: 'Acme', phase: 'Development', state: 'OnTrack' },
         },
       ]);
       // Verify date-range overlap predicate

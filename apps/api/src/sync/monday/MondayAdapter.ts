@@ -1,9 +1,12 @@
-import type {
-  TrackerAdapter,
-  ExternalProject,
-  TrackerMetadata,
-  TrackerAccessCheck,
-  TrackerAccessProbe,
+import {
+  PHASES,
+  phaseLabel,
+  type ExternalProject,
+  type Phase,
+  type TrackerAccessCheck,
+  type TrackerAccessProbe,
+  type TrackerAdapter,
+  type TrackerMetadata,
 } from '@torii/shared';
 
 const MONDAY_API_URL = 'https://api.monday.com/v2';
@@ -129,28 +132,92 @@ function isUnauthorizedFieldOrTypeError(err: unknown): boolean {
   return /queried fields\/types|unauthorized field or type/i.test(err.message);
 }
 
-function extractTargetGoLive(item: MondayItem): string | undefined {
-  for (const col of item.column_values ?? []) {
-    const lowerId = col.id.toLowerCase();
-    if (!lowerId.includes('go') && !lowerId.includes('target') && !lowerId.includes('date')) {
-      continue;
-    }
-    // For Monday date columns, `text` is the ISO date string when present.
-    if (col.text && /^\d{4}-\d{2}-\d{2}$/.test(col.text)) {
-      return col.text;
-    }
-    if (col.value) {
-      try {
-        const parsed = JSON.parse(col.value) as { date?: string };
-        if (parsed.date && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date)) {
-          return parsed.date;
-        }
-      } catch {
-        // ignore
-      }
+/**
+ * Monday column title → `keyDates.<key>`. The Monday board titles are inconsistent
+ * ("Baseline Go-live" vs "Expected Go-Live Date") so the map uses exact titles as
+ * they appear in the live workspace.
+ *
+ * `hypercare_end` has no Monday source — it stays Torii-owned and is derived
+ * downstream when not explicitly set.
+ */
+const MONDAY_KEY_DATE_TITLE_MAP: Record<string, string> = {
+  // "Project Add Date" is when the project enters PMO tracking — that's the kickoff.
+  'Project Add Date': 'kickoff',
+  // "Project Start Date" is when active delivery work begins (post-intake). Distinct from kickoff.
+  'Project Start Date': 'project_start',
+  'UAT Start Date': 'uat_start',
+  'Baseline Go-live': 'baseline_go_live',
+  'Expected Go-Live Date': 'target_go_live',
+  'Actual Go-Live Date': 'actual_go_live',
+};
+
+/** Pull an ISO yyyy-mm-dd date from a Monday date column, preferring `text` over JSON-encoded `value.date`. */
+function readDateColumn(col: MondayColumnValue): string | undefined {
+  if (col.text && /^\d{4}-\d{2}-\d{2}$/.test(col.text)) return col.text;
+  if (col.value) {
+    try {
+      const parsed = JSON.parse(col.value) as { date?: string };
+      if (parsed.date && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date)) return parsed.date;
+    } catch {
+      // ignore malformed JSON
     }
   }
   return undefined;
+}
+
+/**
+ * The Monday board column title that holds the project phase. The column is a status
+ * column whose labels are formatted `[N] Name` (e.g., `[4] Development`).
+ */
+const MONDAY_PHASE_COLUMN_TITLE = 'Project Phase';
+
+/**
+ * Map a Monday "Project Phase" cell value to a Torii `Phase`. Resolution order:
+ *   1. If the value contains a leading bracketed number (`[1]`..`[7]`), use that as
+ *      a 1-based index into `PHASES`. This is the most robust match because it
+ *      survives label edits like "Go-Live Readiness" vs "Go Live Readiness".
+ *   2. Otherwise compare the cleaned text (stripped of any bracket prefix) against
+ *      every phase's display label, case-insensitively.
+ *   3. Return undefined if neither matches — the adapter MUST NOT guess.
+ */
+function parseMondayPhase(rawValue: string): Phase | undefined {
+  const v = rawValue.trim();
+  if (!v) return undefined;
+  const bracketMatch = v.match(/^\[(\d+)\]/);
+  if (bracketMatch) {
+    const n = Number.parseInt(bracketMatch[1]!, 10);
+    if (n >= 1 && n <= PHASES.length) return PHASES[n - 1];
+  }
+  const cleaned = v.replace(/^\[\d+\]\s*/, '').toLowerCase();
+  for (const phase of PHASES) {
+    if (phaseLabel(phase).toLowerCase() === cleaned) return phase;
+  }
+  return undefined;
+}
+
+/** Extract the project phase from the Monday "Project Phase" column. */
+function extractPhase(item: MondayItem): Phase | undefined {
+  for (const col of item.column_values ?? []) {
+    if (col.column?.title !== MONDAY_PHASE_COLUMN_TITLE) continue;
+    const raw = col.display_value?.trim() || col.text?.trim();
+    if (!raw) return undefined;
+    return parseMondayPhase(raw);
+  }
+  return undefined;
+}
+
+/** Extract every recognized key-date column for the item. Empty values are omitted. */
+function extractKeyDates(item: MondayItem): NonNullable<ExternalProject['keyDates']> {
+  const out: NonNullable<ExternalProject['keyDates']> = {};
+  for (const col of item.column_values ?? []) {
+    const title = col.column?.title;
+    if (!title) continue;
+    const key = MONDAY_KEY_DATE_TITLE_MAP[title] as keyof NonNullable<ExternalProject['keyDates']> | undefined;
+    if (!key) continue;
+    const date = readDateColumn(col);
+    if (date) out[key] = date;
+  }
+  return out;
 }
 
 /** Monday board column title → Torii `details.<key>`. Confirmed against live synced data. */
@@ -236,10 +303,13 @@ function extractProjectName(item: MondayItem): string {
 
 function toExternalProject(item: MondayItem): ExternalProject {
   const details = extractDetails(item);
+  const keyDates = extractKeyDates(item);
+  const phase = extractPhase(item);
   return {
     externalId: item.id,
     name: extractProjectName(item),
-    targetGoLive: extractTargetGoLive(item),
+    ...(phase ? { phase } : {}),
+    ...(Object.keys(keyDates).length > 0 ? { keyDates } : {}),
     ...(Object.keys(details).length > 0 ? { details } : {}),
     raw: item,
   };

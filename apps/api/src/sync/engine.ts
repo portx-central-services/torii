@@ -78,6 +78,7 @@ export class SyncEngine {
 
         const existing: ExistingProjectSlice = {
           name: project.name,
+          phase: project.phase,
           keyDates: (project.keyDates as Record<string, string | undefined>) ?? {},
           details: (project.details as Record<string, string | undefined>) ?? {},
         };
@@ -90,6 +91,7 @@ export class SyncEngine {
           data: {
             trackerRaw: (external.raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
             ...(patch.name !== undefined ? { name: patch.name } : {}),
+            ...(patch.phase !== undefined ? { phase: patch.phase } : {}),
             ...(patch.keyDates !== undefined ? { keyDates: patch.keyDates } : {}),
             ...(patch.details !== undefined ? { details: patch.details } : {}),
           },
@@ -139,6 +141,7 @@ export class SyncEngine {
 
       const existing: ExistingProjectSlice = {
         name: project.name,
+        phase: project.phase,
         keyDates: (project.keyDates as Record<string, string | undefined>) ?? {},
         details: (project.details as Record<string, string | undefined>) ?? {},
       };
@@ -151,6 +154,7 @@ export class SyncEngine {
         data: {
           trackerRaw: (external.raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
           ...(patch.name !== undefined ? { name: patch.name } : {}),
+          ...(patch.phase !== undefined ? { phase: patch.phase } : {}),
           ...(patch.keyDates !== undefined ? { keyDates: patch.keyDates } : {}),
           ...(patch.details !== undefined ? { details: patch.details } : {}),
         },
@@ -187,6 +191,7 @@ export class SyncEngine {
 
       const existing: ExistingProjectSlice = {
         name: project.name,
+        phase: project.phase,
         keyDates: (project.keyDates as Record<string, string | undefined>) ?? {},
         details: (project.details as Record<string, string | undefined>) ?? {},
       };
@@ -199,6 +204,7 @@ export class SyncEngine {
         data: {
           trackerRaw: (external.raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
           ...(patch.name !== undefined ? { name: patch.name } : {}),
+          ...(patch.phase !== undefined ? { phase: patch.phase } : {}),
           ...(patch.keyDates !== undefined ? { keyDates: patch.keyDates } : {}),
           ...(patch.details !== undefined ? { details: patch.details } : {}),
         },

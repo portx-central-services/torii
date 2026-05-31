@@ -11,9 +11,13 @@ export function NavShell() {
       ? 'Project detail'
       : location.pathname === '/capacity'
         ? 'Team capacity'
-        : location.pathname === '/trackers'
-          ? 'Trackers'
-          : 'Projects';
+        : location.pathname === '/risks'
+          ? 'Risks'
+          : location.pathname === '/timeline'
+            ? 'Timeline'
+            : location.pathname === '/trackers'
+              ? 'Trackers'
+              : 'Projects';
 
   return (
     <div className="app-shell">
@@ -34,6 +38,18 @@ export function NavShell() {
             className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
           >
             Capacity
+          </NavLink>
+          <NavLink
+            to="/risks"
+            className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
+          >
+            Risks
+          </NavLink>
+          <NavLink
+            to="/timeline"
+            className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
+          >
+            Timeline
           </NavLink>
           {user?.isAdmin && (
             <NavLink

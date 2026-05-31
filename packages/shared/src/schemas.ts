@@ -2,6 +2,10 @@ import { z } from 'zod';
 import {
   PhaseSchema,
   ProjectStateSchema,
+  ProjectTypeSchema,
+  RagLevelSchema,
+  RiskStateSchema,
+  RiskTypeSchema,
   RoleSchema,
   TrackerProviderSchema,
 } from './enums.js';
@@ -12,9 +16,19 @@ const isoDate = z
 
 export const KeyDatesSchema = z
   .object({
+    /** Project kickoff — formal PMO intake. Maps to Monday "Project Add Date". The Timeline bar's left edge. */
     kickoff: isoDate.optional(),
+    /** Start of active delivery work (post-intake). Maps to Monday "Project Start Date". Renders as a tick on the Timeline bar. */
+    project_start: isoDate.optional(),
+    /** Start of the UAT phase. Maps to Monday "UAT Start Date". */
+    uat_start: isoDate.optional(),
+    /** Original committed go-live (Monday "Baseline Go-live"). Informational only — Gantt uses `target_go_live`. */
+    baseline_go_live: isoDate.optional(),
+    /** Current realistic go-live; can shift over time. Maps to Monday "Expected Go-Live Date". The canonical target. */
     target_go_live: isoDate.optional(),
+    /** When the project actually went live. Used to compare against `baseline_go_live`. Maps to Monday "Actual Go-Live Date". */
     actual_go_live: isoDate.optional(),
+    /** End of hypercare. Torii-owned; no Monday source — derived from `actual_go_live`/`target_go_live` when not set. */
     hypercare_end: isoDate.optional(),
   })
   .superRefine((d, ctx) => {
@@ -30,6 +44,13 @@ export const KeyDatesSchema = z
         code: z.ZodIssueCode.custom,
         path: ['actual_go_live'],
         message: 'actual_go_live must not precede kickoff',
+      });
+    }
+    if (d.kickoff && d.project_start && d.project_start < d.kickoff) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['project_start'],
+        message: 'project_start must not precede kickoff',
       });
     }
   });
@@ -102,6 +123,8 @@ export const ProjectOutSchema = z.object({
   state: ProjectStateSchema,
   keyDates: KeyDatesSchema,
   details: ProjectDetailsSchema.optional(),
+  /** Derived from `details.fintech_parent` server-side; not a persisted column. */
+  projectType: ProjectTypeSchema,
   ownerId: z.string().nullable(),
   trackerRef: TrackerRefSchema,
   fieldMapping: FieldMappingSchema,
@@ -170,6 +193,49 @@ export const AllocationUpdateSchema = z
     message: 'No fields to update',
   });
 
+/** Weekly risk snapshot per project. `weekOf` is the Monday of an ISO week (UTC), as YYYY-MM-DD. */
+export const ProjectRiskUpdateOutSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  weekOf: isoDate,
+  ragLevel: RagLevelSchema,
+  riskTypes: z.array(RiskTypeSchema).min(1),
+  state: RiskStateSchema,
+  description: z.string(),
+  goToGreenPlan: z.string(),
+  latestUpdate: z.string(),
+  nextSteps: z.string(),
+  actionRequested: z.string(),
+  authorId: z.string(),
+  authorName: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+/** Body schema for `POST /api/projects/:id/risk-updates`. `weekOf` is optional — when present it MUST equal the current ISO week's Monday (UTC); the server enforces this. */
+export const ProjectRiskUpdateUpsertSchema = z.object({
+  weekOf: isoDate.optional(),
+  ragLevel: RagLevelSchema,
+  riskTypes: z.array(RiskTypeSchema).min(1, 'At least one risk type is required'),
+  state: RiskStateSchema,
+  description: z.string().default(''),
+  goToGreenPlan: z.string().default(''),
+  latestUpdate: z.string().default(''),
+  nextSteps: z.string().default(''),
+  actionRequested: z.string().default(''),
+});
+
+/** Row shape returned by `GET /api/risks` (one entry per currently-at-risk project). */
+export const RiskListItemSchema = z.object({
+  projectId: z.string(),
+  projectName: z.string(),
+  weekOf: isoDate,
+  ragLevel: RagLevelSchema,
+  riskTypes: z.array(RiskTypeSchema),
+  state: RiskStateSchema,
+  title: z.string(),
+});
+
 export type KeyDates = z.infer<typeof KeyDatesSchema>;
 export type ProjectDetails = z.infer<typeof ProjectDetailsSchema>;
 export type TrackerRef = z.infer<typeof TrackerRefSchema>;
@@ -181,3 +247,6 @@ export type AllocationOut = z.infer<typeof AllocationOutSchema>;
 export type AllocationCreate = z.infer<typeof AllocationCreateSchema>;
 export type AllocationUpdate = z.infer<typeof AllocationUpdateSchema>;
 export type PersonOut = z.infer<typeof PersonOutSchema>;
+export type ProjectRiskUpdateOut = z.infer<typeof ProjectRiskUpdateOutSchema>;
+export type ProjectRiskUpdateUpsert = z.infer<typeof ProjectRiskUpdateUpsertSchema>;
+export type RiskListItem = z.infer<typeof RiskListItemSchema>;

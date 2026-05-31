@@ -27,7 +27,13 @@ describe('MondayAdapter', () => {
                     id: '101',
                     name: 'Acme integration',
                     column_values: [
-                      { id: 'go_live_date', type: 'date', text: '2026-09-01', value: null },
+                      {
+                        id: 'go_live_date',
+                        column: { id: 'go_live_date', title: 'Expected Go-Live Date' },
+                        type: 'date',
+                        text: '2026-09-01',
+                        value: null,
+                      },
                     ],
                   },
                 ],
@@ -54,13 +60,12 @@ describe('MondayAdapter', () => {
       {
         externalId: '101',
         name: 'Acme integration',
-        targetGoLive: '2026-09-01',
+        keyDates: { target_go_live: '2026-09-01' },
         raw: expect.any(Object),
       },
       {
         externalId: '202',
         name: 'Beta launch',
-        targetGoLive: undefined,
         raw: expect.any(Object),
       },
     ]);
@@ -73,7 +78,7 @@ describe('MondayAdapter', () => {
     );
   });
 
-  it('extracts targetGoLive from column value JSON when text is empty', async () => {
+  it('extracts target_go_live from column value JSON when text is empty', async () => {
     const fetchFn = vi.fn().mockResolvedValue(
       mkResponse(200, {
         data: {
@@ -89,6 +94,7 @@ describe('MondayAdapter', () => {
                     column_values: [
                       {
                         id: 'target_date',
+                        column: { id: 'target_date', title: 'Expected Go-Live Date' },
                         type: 'date',
                         text: null,
                         value: '{"date":"2026-10-15"}',
@@ -108,7 +114,244 @@ describe('MondayAdapter', () => {
       fetchFn: fetchFn as unknown as typeof fetch,
     });
     const items = await adapter.listProjects();
-    expect(items[0]!.targetGoLive).toBe('2026-10-15');
+    expect(items[0]!.keyDates?.target_go_live).toBe('2026-10-15');
+  });
+
+  it('extracts every recognized key-date column', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      mkResponse(200, {
+        data: {
+          boards: [
+            {
+              id: '1',
+              name: 'B',
+              items_page: {
+                items: [
+                  {
+                    id: '1',
+                    name: 'X',
+                    column_values: [
+                      {
+                        id: 'c1',
+                        column: { id: 'c1', title: 'Project Add Date' },
+                        type: 'date',
+                        text: '2026-01-05',
+                        value: null,
+                      },
+                      {
+                        id: 'c2',
+                        column: { id: 'c2', title: 'Project Start Date' },
+                        type: 'date',
+                        text: '2026-02-10',
+                        value: null,
+                      },
+                      {
+                        id: 'c3',
+                        column: { id: 'c3', title: 'UAT Start Date' },
+                        type: 'date',
+                        text: '2026-05-15',
+                        value: null,
+                      },
+                      {
+                        id: 'c4',
+                        column: { id: 'c4', title: 'Baseline Go-live' },
+                        type: 'date',
+                        text: '2026-08-01',
+                        value: null,
+                      },
+                      {
+                        id: 'c5',
+                        column: { id: 'c5', title: 'Expected Go-Live Date' },
+                        type: 'date',
+                        text: '2026-09-01',
+                        value: null,
+                      },
+                      {
+                        id: 'c6',
+                        column: { id: 'c6', title: 'Actual Go-Live Date' },
+                        type: 'date',
+                        text: '2026-09-04',
+                        value: null,
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    const adapter = new MondayAdapter({
+      workspace: 'w',
+      accessToken: 'tok',
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+    const items = await adapter.listProjects();
+    expect(items[0]!.keyDates).toEqual({
+      kickoff: '2026-01-05',
+      project_start: '2026-02-10',
+      uat_start: '2026-05-15',
+      baseline_go_live: '2026-08-01',
+      target_go_live: '2026-09-01',
+      actual_go_live: '2026-09-04',
+    });
+  });
+
+  it('extracts phase from the "Project Phase" column via bracket index', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      mkResponse(200, {
+        data: {
+          boards: [
+            {
+              id: '1',
+              name: 'B',
+              items_page: {
+                items: [
+                  {
+                    id: '1',
+                    name: 'X',
+                    column_values: [
+                      {
+                        id: 'phase',
+                        column: { id: 'phase', title: 'Project Phase' },
+                        type: 'status',
+                        text: '[4] Development',
+                        value: null,
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    const adapter = new MondayAdapter({
+      workspace: 'w',
+      accessToken: 'tok',
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+    const items = await adapter.listProjects();
+    expect(items[0]!.phase).toBe('Development');
+  });
+
+  it('extracts phase via display label when no bracket prefix is present', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      mkResponse(200, {
+        data: {
+          boards: [
+            {
+              id: '1',
+              name: 'B',
+              items_page: {
+                items: [
+                  {
+                    id: '1',
+                    name: 'X',
+                    column_values: [
+                      {
+                        id: 'phase',
+                        column: { id: 'phase', title: 'Project Phase' },
+                        type: 'status',
+                        text: 'Go-Live Readiness',
+                        value: null,
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    const adapter = new MondayAdapter({
+      workspace: 'w',
+      accessToken: 'tok',
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+    const items = await adapter.listProjects();
+    expect(items[0]!.phase).toBe('GoLiveReadiness');
+  });
+
+  it('omits phase when the "Project Phase" column is empty or unrecognized', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      mkResponse(200, {
+        data: {
+          boards: [
+            {
+              id: '1',
+              name: 'B',
+              items_page: {
+                items: [
+                  {
+                    id: '1',
+                    name: 'X',
+                    column_values: [
+                      {
+                        id: 'phase',
+                        column: { id: 'phase', title: 'Project Phase' },
+                        type: 'status',
+                        text: 'Some Unknown Label',
+                        value: null,
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    const adapter = new MondayAdapter({
+      workspace: 'w',
+      accessToken: 'tok',
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+    const items = await adapter.listProjects();
+    expect(items[0]!.phase).toBeUndefined();
+  });
+
+  it('omits keyDates when no recognized date columns are present', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      mkResponse(200, {
+        data: {
+          boards: [
+            {
+              id: '1',
+              name: 'B',
+              items_page: {
+                items: [
+                  {
+                    id: '1',
+                    name: 'No dates',
+                    column_values: [
+                      {
+                        id: 'unrelated',
+                        column: { id: 'unrelated', title: 'Some Other Column' },
+                        type: 'text',
+                        text: 'hello',
+                        value: null,
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    const adapter = new MondayAdapter({
+      workspace: 'w',
+      accessToken: 'tok',
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+    const items = await adapter.listProjects();
+    expect(items[0]!.keyDates).toBeUndefined();
   });
 
   it('prefers the project column value over item name when present', async () => {
@@ -305,7 +548,6 @@ describe('MondayAdapter', () => {
       {
         externalId: '101',
         name: 'Acme integration',
-        targetGoLive: undefined,
         raw: expect.any(Object),
       },
     ]);
@@ -343,7 +585,6 @@ describe('MondayAdapter', () => {
     expect(item).toEqual({
       externalId: '101',
       name: 'Acme integration',
-      targetGoLive: undefined,
       raw: expect.any(Object),
     });
     expect(fetchFn).toHaveBeenCalledTimes(2);

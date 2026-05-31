@@ -54,7 +54,7 @@ describe('SyncEngine', () => {
   describe('syncConnection happy path', () => {
     it('patches a linked project when external name differs (monday-owned)', async () => {
       const externals: ExternalProject[] = [
-        { externalId: '101', name: 'Acme RENAMED', targetGoLive: '2026-09-01' },
+        { externalId: '101', name: 'Acme RENAMED', keyDates: { target_go_live: '2026-09-01' } },
       ];
       const adapter = mockAdapter({ listProjects: vi.fn().mockResolvedValue(externals) });
       registerAdapter('monday', () => adapter);
@@ -72,7 +72,7 @@ describe('SyncEngine', () => {
         {
           id: 'proj-1',
           name: 'Acme',
-          phase: 'Build',
+          phase: 'Development',
           state: 'OnTrack',
           keyDates: {},
           trackerRef: { provider: 'monday', externalId: '101' },
@@ -124,7 +124,7 @@ describe('SyncEngine', () => {
       registerAdapter('monday', () =>
         mockAdapter({
           listProjects: vi.fn().mockResolvedValue([
-            { externalId: '101', name: 'Updated', targetGoLive: '2026-12-01' },
+            { externalId: '101', name: 'Updated', keyDates: { target_go_live: '2026-12-01' } },
           ]),
         }),
       );
@@ -172,7 +172,7 @@ describe('SyncEngine', () => {
             {
               externalId: '101',
               name: 'Acme',
-              targetGoLive: '2026-09-01',
+              keyDates: { target_go_live: '2026-09-01' },
               raw: rawPayload,
             },
           ]),
@@ -192,7 +192,7 @@ describe('SyncEngine', () => {
         {
           id: 'proj-1',
           name: 'Acme',
-          phase: 'Build',
+          phase: 'Development',
           state: 'OnTrack',
           keyDates: { target_go_live: '2026-09-01' },
           trackerRef: { provider: 'monday', externalId: '101' },
@@ -217,7 +217,7 @@ describe('SyncEngine', () => {
           return {
             externalId: '102',
             name: 'Beta RENAMED',
-            targetGoLive: '2026-10-01',
+            keyDates: { target_go_live: '2026-10-01' },
             raw: rawForB,
           };
         }
@@ -238,7 +238,7 @@ describe('SyncEngine', () => {
         {
           id: 'proj-A',
           name: 'Alpha',
-          phase: 'Build',
+          phase: 'Development',
           state: 'OnTrack',
           keyDates: {},
           trackerRef: { provider: 'monday', externalId: '101' },
@@ -247,7 +247,7 @@ describe('SyncEngine', () => {
         {
           id: 'proj-B',
           name: 'Beta',
-          phase: 'Build',
+          phase: 'Development',
           state: 'OnTrack',
           keyDates: {},
           trackerRef: { provider: 'monday', externalId: '102' },
@@ -303,7 +303,7 @@ describe('SyncEngine', () => {
         {
           id: 'proj-A',
           name: 'Alpha',
-          phase: 'Build',
+          phase: 'Development',
           state: 'OnTrack',
           keyDates: {},
           trackerRef: { provider: 'monday', externalId: '101' },

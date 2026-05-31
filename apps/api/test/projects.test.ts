@@ -9,7 +9,7 @@ function baseProject() {
   return {
     id: 'proj-1',
     name: 'Acme integration',
-    phase: 'Build',
+    phase: 'Development',
     state: 'OnTrack',
     keyDates: { kickoff: '2026-06-01', target_go_live: '2026-09-01' },
     details: {},
@@ -91,10 +91,10 @@ describe('projects routes', () => {
       db.project.findMany.mockResolvedValue([]);
       await app.inject({
         method: 'GET',
-        url: '/api/projects?phase=Build&state=Blocked',
+        url: '/api/projects?phase=Development&state=Blocked',
       });
       expect(db.project.findMany).toHaveBeenCalledWith({
-        where: { phase: 'Build', state: 'Blocked' },
+        where: { phase: 'Development', state: 'Blocked' },
         orderBy: { name: 'asc' },
       });
     });
@@ -261,18 +261,18 @@ describe('projects routes', () => {
       expect(db.phaseAuditLog.create).toHaveBeenCalledWith({
         data: {
           projectId: project.id,
-          fromPhase: 'Build',
+          fromPhase: 'Development',
           toPhase: 'UAT',
           actorId: pmUser.id,
         },
       });
     });
 
-    it('auto-sets state to Done when phase advances to Hypercare with actual_go_live set', async () => {
+    it('auto-sets state to Done when phase advances to Production with actual_go_live set', async () => {
       userRef.current = pmUser;
       const project = {
         ...baseProject(),
-        phase: 'Launch',
+        phase: 'GoLiveReadiness',
         keyDates: { kickoff: '2026-06-01', target_go_live: '2026-09-01' },
       };
       db.project.findUnique.mockResolvedValue(project);
@@ -284,7 +284,7 @@ describe('projects routes', () => {
       const r = await app.inject({
         method: 'PATCH',
         url: `/api/projects/${project.id}`,
-        payload: { phase: 'Hypercare', keyDates: { actual_go_live: '2026-09-05' } },
+        payload: { phase: 'Production', keyDates: { actual_go_live: '2026-09-05' } },
       });
       expect(r.statusCode).toBe(200);
       const updateCall = db.project.update.mock.calls[0]?.[0] as { data: { state: string } };
@@ -293,7 +293,7 @@ describe('projects routes', () => {
 
     it('does NOT auto-set state to Done when caller passes explicit state', async () => {
       userRef.current = pmUser;
-      const project = { ...baseProject(), phase: 'Launch' };
+      const project = { ...baseProject(), phase: 'GoLiveReadiness' };
       db.project.findUnique.mockResolvedValue(project);
       db.project.update.mockImplementation(async (args: { data: Record<string, unknown> }) => ({
         ...project,
@@ -304,7 +304,7 @@ describe('projects routes', () => {
         method: 'PATCH',
         url: `/api/projects/${project.id}`,
         payload: {
-          phase: 'Hypercare',
+          phase: 'Production',
           state: 'AtRisk',
           keyDates: { actual_go_live: '2026-09-05' },
         },

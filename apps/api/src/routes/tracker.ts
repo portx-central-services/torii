@@ -1,12 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { Prisma, TrackerProvider } from '@prisma/client';
-import {
-  ForbiddenError,
-  NotFoundError,
-  ValidationError,
-  DEFAULT_FIELD_MAPPING,
-} from '@torii/shared';
+import { ForbiddenError, NotFoundError, ValidationError } from '@torii/shared';
 import type { DB } from '../db.js';
 import type { Env } from '../env.js';
 import { requireAdmin, requirePM, requireUser } from '../plugins/guards.js';
@@ -242,9 +237,9 @@ export function registerTrackerRoutes(
       }
 
       const name = external?.name ?? `Monday item ${externalId}`;
-      const newKeyDateFields: Record<string, string> = {};
-      if (external?.targetGoLive) newKeyDateFields.target_go_live = external.targetGoLive;
+      const newKeyDateFields: Record<string, string> = { ...(external?.keyDates ?? {}) };
       const newDetailFields = external?.details ?? {};
+      const externalPhase = external?.phase;
       if (!external?.name) placeholdered.push(externalId);
 
       const trackerRawValue = (external?.raw ?? Prisma.JsonNull) as Prisma.InputJsonValue;
@@ -262,6 +257,7 @@ export function registerTrackerRoutes(
           where: { id: matching.id },
           data: {
             name,
+            ...(externalPhase ? { phase: externalPhase } : {}),
             keyDates: mergedKeyDates,
             details: mergedDetails,
             trackerRaw: trackerRawValue,
@@ -272,8 +268,15 @@ export function registerTrackerRoutes(
         const project = await db.project.create({
           data: {
             name,
+            ...(externalPhase ? { phase: externalPhase } : {}),
             trackerRef: { provider: conn.provider, externalId },
-            fieldMapping: DEFAULT_FIELD_MAPPING,
+            // Empty per-project mapping — the merge engine falls through to
+            // `DEFAULT_FIELD_MAPPING` for unspecified keys. Snapshotting the
+            // full default here would re-introduce the stale-ownership bug
+            // (see migration 20260530120000): a key whose default later flips
+            // would stay pinned on every old row. Per-project overrides
+            // (e.g., PM pinning phase to torii) live here when actually set.
+            fieldMapping: {},
             trackerRaw: trackerRawValue,
             ...(Object.keys(newKeyDateFields).length > 0 ? { keyDates: newKeyDateFields } : {}),
             ...(Object.keys(newDetailFields).length > 0 ? { details: newDetailFields } : {}),

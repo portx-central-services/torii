@@ -3,16 +3,19 @@ import {
   PROJECT_DETAIL_KEYS,
   type ExternalProject,
   type FieldOwner,
+  type Phase,
 } from '@torii/shared';
 
 export interface ExistingProjectSlice {
   name: string;
+  phase: Phase;
   keyDates: Record<string, string | undefined> | null;
   details: Record<string, string | undefined> | null;
 }
 
 export interface MergePatch {
   name?: string;
+  phase?: Phase;
   keyDates?: Record<string, string | undefined>;
   details?: Record<string, string | undefined>;
 }
@@ -42,23 +45,31 @@ export function mergeExternalIntoTorii(
   // name
   if (external.name !== undefined && lookup('name') !== 'torii') {
     if (external.name !== existing.name) {
-      // patch.name = external.name;
       patch.name = external.name;
     }
   }
 
-  // key_dates.target_go_live
-  if (
-    external.targetGoLive !== undefined &&
-    lookup('key_dates.target_go_live') !== 'torii'
-  ) {
-    const existingTarget = existing.keyDates?.target_go_live;
-    if (external.targetGoLive !== existingTarget) {
-      patch.keyDates = {
-        ...(existing.keyDates ?? {}),
-        target_go_live: external.targetGoLive,
-      };
+  // phase — Monday-owned by default. Skip when the adapter couldn't resolve a value
+  // (`external.phase === undefined`) so we never overwrite a real value with nothing.
+  if (external.phase !== undefined && lookup('phase') !== 'torii') {
+    if (external.phase !== existing.phase) {
+      patch.phase = external.phase;
     }
+  }
+
+  // key_dates.* — per-key ownership. Apply any external date whose owner is not Torii
+  // and whose value differs from what's stored. Empty external map → no signal.
+  const existingKeyDates = existing.keyDates ?? {};
+  const keyDateUpdates: Record<string, string> = {};
+  for (const [key, externalValue] of Object.entries(external.keyDates ?? {})) {
+    if (externalValue === undefined) continue;
+    if (lookup(`key_dates.${key}`) === 'torii') continue;
+    if (externalValue !== existingKeyDates[key]) {
+      keyDateUpdates[key] = externalValue;
+    }
+  }
+  if (Object.keys(keyDateUpdates).length > 0) {
+    patch.keyDates = { ...existingKeyDates, ...keyDateUpdates };
   }
 
   // details.* — only Monday-owned keys with a changed external value are applied,

@@ -66,6 +66,25 @@ export const DEFAULT_HIDDEN_DETAIL_COLUMNS: ProjectDetailKey[] = [
   'customer_status',
 ];
 
+export const PROJECT_TYPES = ['direct', 'fintech'] as const;
+export type ProjectType = (typeof PROJECT_TYPES)[number];
+
+export const RAG_LEVELS = ['Red', 'Amber', 'Green'] as const;
+export type RagLevel = (typeof RAG_LEVELS)[number];
+
+export const RISK_TYPES = [
+  'Technical',
+  'Relationship',
+  'Schedule',
+  'ExternalDependency',
+  'Gap',
+  'Resourcing',
+] as const;
+export type RiskType = (typeof RISK_TYPES)[number];
+
+export const RISK_STATES = ['Blocked', 'Inform'] as const;
+export type RiskState = (typeof RISK_STATES)[number];
+
 export interface Project {
   id: string;
   name: string;
@@ -73,16 +92,62 @@ export interface Project {
   state: ProjectState;
   keyDates: {
     kickoff?: string;
+    project_start?: string;
+    uat_start?: string;
+    baseline_go_live?: string;
     target_go_live?: string;
     actual_go_live?: string;
     hypercare_end?: string;
   };
   details: ProjectDetails;
+  /** Derived from `details.fintech_parent`; read-only on the API. */
+  projectType: ProjectType;
+  /** Reserved for a future Harvest integration; today always undefined/false. */
+  overBudget?: boolean;
   ownerId: string | null;
   trackerRef: { provider: string; externalId: string } | null;
   fieldMapping: Record<string, 'torii' | 'monday'>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RiskListItem {
+  projectId: string;
+  projectName: string;
+  weekOf: string;
+  ragLevel: RagLevel;
+  riskTypes: RiskType[];
+  state: RiskState;
+  title: string;
+}
+
+export interface ProjectRiskUpdate {
+  id: string;
+  projectId: string;
+  weekOf: string;
+  ragLevel: RagLevel;
+  riskTypes: RiskType[];
+  state: RiskState;
+  description: string;
+  goToGreenPlan: string;
+  latestUpdate: string;
+  nextSteps: string;
+  actionRequested: string;
+  authorId: string;
+  authorName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectRiskUpdateUpsert {
+  ragLevel: RagLevel;
+  riskTypes: RiskType[];
+  state: RiskState;
+  description?: string;
+  goToGreenPlan?: string;
+  latestUpdate?: string;
+  nextSteps?: string;
+  actionRequested?: string;
 }
 
 export interface UserPreferences {
@@ -218,4 +283,10 @@ export const endpoints = {
   getPreferences: () => api.get<UserPreferences>('/api/me/preferences'),
   updatePreferences: (hiddenProjectColumns: string[]) =>
     api.put<UserPreferences>('/api/me/preferences', { hiddenProjectColumns }),
+
+  listRisks: () => api.get<RiskListItem[]>('/api/risks'),
+  getProjectRiskUpdates: (projectId: string) =>
+    api.get<ProjectRiskUpdate[]>(`/api/projects/${projectId}/risk-updates`),
+  upsertProjectRiskUpdate: (projectId: string, body: ProjectRiskUpdateUpsert) =>
+    api.post<ProjectRiskUpdate>(`/api/projects/${projectId}/risk-updates`, body),
 };

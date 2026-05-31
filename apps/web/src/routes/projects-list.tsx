@@ -10,7 +10,7 @@ import {
   type SortingState,
   type VisibilityState,
 } from '@tanstack/react-table';
-import { PHASES, PROJECT_STATES, type Phase, type ProjectState } from '@torii/shared';
+import { PHASES, PROJECT_STATES, phaseLabel, type Phase, type ProjectState } from '@torii/shared';
 import {
   endpoints,
   PROJECT_DETAIL_FIELDS,
@@ -229,7 +229,7 @@ export function ProjectsListPage() {
               <option value="">All</option>
               {PHASES.map((p) => (
                 <option key={p} value={p}>
-                  {p}
+                  {phaseLabel(p)}
                 </option>
               ))}
             </select>
@@ -387,7 +387,7 @@ function CreateProjectModal({
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
-  const [phase, setPhase] = useState<Phase>('Discovery');
+  const [phase, setPhase] = useState<Phase>('Backlog');
   const [state, setState] = useState<ProjectState>('OnTrack');
   const [kickoff, setKickoff] = useState('');
   const [targetGoLive, setTargetGoLive] = useState('');
@@ -415,7 +415,7 @@ function CreateProjectModal({
 
   function reset() {
     setName('');
-    setPhase('Discovery');
+    setPhase('Backlog');
     setState('OnTrack');
     setKickoff('');
     setTargetGoLive('');
@@ -455,7 +455,7 @@ function CreateProjectModal({
             >
               {PHASES.map((p) => (
                 <option key={p} value={p}>
-                  {p}
+                  {phaseLabel(p)}
                 </option>
               ))}
             </select>

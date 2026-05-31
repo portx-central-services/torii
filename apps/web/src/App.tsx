@@ -10,6 +10,8 @@ import { SignInPage } from './routes/signin.js';
 import { ProjectsListPage } from './routes/projects-list.js';
 import { ProjectDetailPage } from './routes/project-detail.js';
 import { CapacityPage } from './routes/capacity.js';
+import { RisksPage } from './routes/risks.js';
+import { TimelinePage } from './routes/timeline.js';
 import { TrackersPage } from './routes/trackers.js';
 
 const queryClient = new QueryClient({
@@ -35,6 +37,8 @@ export function App() {
               <Route path="projects" element={<ProjectsListPage />} />
               <Route path="projects/:id" element={<ProjectDetailPage />} />
               <Route path="capacity" element={<CapacityPage />} />
+              <Route path="risks" element={<RisksPage />} />
+              <Route path="timeline" element={<TimelinePage />} />
               <Route
                 path="trackers"
                 element={
