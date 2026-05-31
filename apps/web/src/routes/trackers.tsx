@@ -24,9 +24,14 @@ export function TrackersPage() {
             Connect external trackers to import projects and keep selected fields in sync.
           </div>
         </div>
-        <a className="btn-primary" href="/api/tracker/monday/connect">
-          Connect Monday.com
-        </a>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <a className="btn-primary" href="/api/tracker/monday/connect">
+            Connect Monday.com
+          </a>
+          <a className="btn-primary" href="/api/tracker/harvest/connect">
+            Connect Harvest
+          </a>
+        </div>
       </div>
 
       <div className="kpi-row trackers-kpi-row">
@@ -71,6 +76,10 @@ export function TrackersPage() {
             <ConnectionCard key={c.id} connection={c} />
           ))}
         </div>
+      )}
+
+      {connections.some((c) => c.provider === 'harvest' && c.status !== 'auth_failed') && (
+        <HarvestLinkTable />
       )}
     </div>
   );
@@ -214,6 +223,116 @@ function ImportPanel({ connectionId }: { connectionId: string }) {
         >
           {mutation.isPending ? 'Importing...' : 'Import'}
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Bulk-link UI for Harvest. Lists every Harvest project from the active connection;
+ * each row has a dropdown to pick which Torii project to link to. Submits each
+ * selection independently so partial saves are visible.
+ */
+function HarvestLinkTable() {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<Set<string>>(new Set());
+
+  const harvestQ = useQuery({
+    queryKey: ['harvest-projects'],
+    queryFn: () => endpoints.listHarvestProjects(),
+  });
+  const projectsQ = useQuery({
+    queryKey: ['projects', 'harvest-link-table'],
+    queryFn: () => endpoints.listProjects({}),
+  });
+
+  const linkMutation = useMutation({
+    mutationFn: async ({ toiriProjectId, harvestProjectId }: { toiriProjectId: string; harvestProjectId: string }) => {
+      return endpoints.linkHarvestProject(toiriProjectId, harvestProjectId);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['harvest-projects'] });
+      await queryClient.invalidateQueries({ queryKey: ['projects'] });
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Link failed'),
+  });
+
+  if (harvestQ.isLoading) return <div className="empty">Loading Harvest projects...</div>;
+  if (harvestQ.isError) {
+    return <div className="empty text-red-700">Unable to load Harvest projects: {(harvestQ.error as Error).message}</div>;
+  }
+
+  const harvestProjects = harvestQ.data ?? [];
+  const toiriProjects = projectsQ.data ?? [];
+
+  function handleSelect(harvestProjectId: string, toiriProjectId: string) {
+    if (!toiriProjectId) return;
+    setError(null);
+    setPending((s) => new Set(s).add(harvestProjectId));
+    linkMutation.mutate(
+      { toiriProjectId, harvestProjectId },
+      {
+        onSettled: () =>
+          setPending((s) => {
+            const next = new Set(s);
+            next.delete(harvestProjectId);
+            return next;
+          }),
+      },
+    );
+  }
+
+  return (
+    <div className="section-card" style={{ padding: 16 }}>
+      <h3 style={{ marginTop: 0 }}>Link Harvest projects</h3>
+      <div className="text-sm" style={{ color: 'var(--ink-500)', marginBottom: 12 }}>
+        Pick the Torii project that matches each Harvest project. Already-linked rows show their current link.
+      </div>
+      {error && <div className="text-red-700" style={{ marginBottom: 8 }}>{error}</div>}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--ink-200)' }}>
+              <th style={{ padding: '8px 4px' }}>Harvest project</th>
+              <th style={{ padding: '8px 4px' }}>ID</th>
+              <th style={{ padding: '8px 4px' }}>Torii link</th>
+            </tr>
+          </thead>
+          <tbody>
+            {harvestProjects.map((hp) => (
+              <tr key={hp.harvestProjectId} style={{ borderBottom: '1px solid var(--ink-100)' }}>
+                <td style={{ padding: '6px 4px', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {hp.name}
+                </td>
+                <td style={{ padding: '6px 4px', fontFamily: 'monospace', fontSize: 11, color: 'var(--ink-500)' }}>
+                  {hp.harvestProjectId}
+                </td>
+                <td style={{ padding: '6px 4px' }}>
+                  {hp.linkedToiriProjectId ? (
+                    <span className="text-sm">Linked to {hp.linkedToiriProjectName ?? hp.linkedToiriProjectId}</span>
+                  ) : (
+                    <select
+                      className="input"
+                      defaultValue=""
+                      disabled={pending.has(hp.harvestProjectId)}
+                      onChange={(e) => handleSelect(hp.harvestProjectId, e.target.value)}
+                    >
+                      <option value="">Skip</option>
+                      {toiriProjects
+                        .filter((p) => !p.harvestProjectId)
+                        .map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                    </select>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

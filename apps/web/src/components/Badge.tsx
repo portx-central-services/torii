@@ -24,3 +24,31 @@ export function PhaseBadge({ phase }: { phase: Phase }) {
 export function StateBadge({ state }: { state: ProjectState }) {
   return <span className={`badge ${stateStyle[state]}`}>{state}</span>;
 }
+
+/**
+ * "On budget" / "Over budget −N%" chip. Renders only when a snapshot exists
+ * (snapshot prop is non-null); otherwise nothing — an "On budget" claim with
+ * no data would be misleading. Use alongside the State badge in the header.
+ */
+export function OnBudgetChip({
+  budgetHours,
+  spentBillable,
+  spentNonbillable,
+}: {
+  budgetHours: number | null;
+  spentBillable: number;
+  spentNonbillable: number;
+}) {
+  if (budgetHours === null || budgetHours <= 0) return null;
+  const spent = spentBillable + spentNonbillable;
+  const pct = Math.round(((spent - budgetHours) / budgetHours) * 100);
+  const isOver = spent > budgetHours;
+  if (isOver) {
+    // Use a Unicode minus to mirror the prototype's "Over budget −36%" formatting.
+    // `pct` here is positive (overage); the minus indicates the budget remaining is negative.
+    return (
+      <span className="badge bg-red-50 text-red-700">Over budget −{pct}%</span>
+    );
+  }
+  return <span className="badge bg-emerald-50 text-emerald-700">On budget</span>;
+}

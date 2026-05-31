@@ -16,6 +16,7 @@ function baseProject() {
     ownerId: null,
     trackerRef: null,
     fieldMapping: {},
+    harvestProjectId: null,
     createdAt: new Date('2026-05-01T00:00:00Z'),
     updatedAt: new Date('2026-05-01T00:00:00Z'),
   };
@@ -67,6 +68,7 @@ describe('projects routes', () => {
       expect(db.project.findMany).toHaveBeenCalledWith({
         where: {},
         orderBy: { name: 'asc' },
+        include: { harvestSnapshot: true },
       });
     });
 
@@ -96,6 +98,7 @@ describe('projects routes', () => {
       expect(db.project.findMany).toHaveBeenCalledWith({
         where: { phase: 'Development', state: 'Blocked' },
         orderBy: { name: 'asc' },
+        include: { harvestSnapshot: true },
       });
     });
 
@@ -332,6 +335,53 @@ describe('projects routes', () => {
         payload: { phase: 'UAT' },
       });
       expect(r.statusCode).toBe(404);
+    });
+  });
+
+  describe('derived overBudget', () => {
+    function projectWith(snapshot: Record<string, unknown> | null) {
+      return { ...baseProject(), harvestSnapshot: snapshot };
+    }
+
+    it('overBudget is true when spent > budget (Abrigo example)', async () => {
+      userRef.current = viewerUser;
+      db.project.findMany.mockResolvedValue([
+        projectWith({ budgetHours: '615', spentHoursBillable: '683.5', spentHoursNonbillable: '155' }),
+      ]);
+      const r = await app.inject({ method: 'GET', url: '/api/projects' });
+      expect(r.statusCode).toBe(200);
+      const list = r.json() as Array<{ overBudget: boolean; budgetHours: number | null; spentHours: number | null }>;
+      expect(list[0]!.overBudget).toBe(true);
+      expect(list[0]!.budgetHours).toBe(615);
+      expect(list[0]!.spentHours).toBeCloseTo(838.5, 1);
+    });
+
+    it('overBudget is false when spent === budget (strict greater-than)', async () => {
+      userRef.current = viewerUser;
+      db.project.findMany.mockResolvedValue([
+        projectWith({ budgetHours: '100', spentHoursBillable: '100', spentHoursNonbillable: '0' }),
+      ]);
+      const r = await app.inject({ method: 'GET', url: '/api/projects' });
+      expect((r.json() as Array<{ overBudget: boolean }>)[0]!.overBudget).toBe(false);
+    });
+
+    it('overBudget is false when budgetHours is null', async () => {
+      userRef.current = viewerUser;
+      db.project.findMany.mockResolvedValue([
+        projectWith({ budgetHours: null, spentHoursBillable: '999', spentHoursNonbillable: '0' }),
+      ]);
+      const r = await app.inject({ method: 'GET', url: '/api/projects' });
+      expect((r.json() as Array<{ overBudget: boolean }>)[0]!.overBudget).toBe(false);
+    });
+
+    it('overBudget is false when no snapshot exists', async () => {
+      userRef.current = viewerUser;
+      db.project.findMany.mockResolvedValue([projectWith(null)]);
+      const r = await app.inject({ method: 'GET', url: '/api/projects' });
+      const item = (r.json() as Array<{ overBudget: boolean; budgetHours: number | null; spentHours: number | null }>)[0]!;
+      expect(item.overBudget).toBe(false);
+      expect(item.budgetHours).toBeNull();
+      expect(item.spentHours).toBeNull();
     });
   });
 });

@@ -5,6 +5,8 @@ export type TrackerAdapterFactory = (config: {
   workspace: string;
   accessToken: string;
   refreshToken?: string;
+  /** Harvest only — required for the `Harvest-Account-Id` header on every API call. */
+  accountId?: string;
 }) => TrackerAdapter;
 
 const factories = new Map<TrackerProvider, TrackerAdapterFactory>();

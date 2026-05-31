@@ -34,6 +34,7 @@ enum Role {
 
 enum TrackerProvider {
   monday
+  harvest
 }
 
 enum TrackerConnectionStatus {
@@ -111,14 +112,18 @@ model Project {
   details       Json         @default("{}") @map("details")
   // { fieldName: "torii" | "monday" } - per-field ownership
   fieldMapping  Json         @default("{}") @map("field_mapping")
+  // Optional link to a Harvest project. Unique so two Torii projects can't claim the same Harvest project.
+  harvestProjectId String?   @map("harvest_project_id")
   createdAt     DateTime     @default(now()) @map("created_at")
   updatedAt     DateTime     @updatedAt @map("updated_at")
 
-  owner             Person?             @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  owner             Person?                 @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: SetNull)
   allocations       Allocation[]
   phaseTransitions  PhaseAuditLog[]
   riskUpdates       ProjectRiskUpdate[]
+  harvestSnapshot   ProjectHarvestSnapshot?
 
+  @@unique([harvestProjectId])
   @@map("projects")
 }
 
@@ -146,6 +151,9 @@ model TrackerConnection {
   workspace       String
   accessTokenEnc  String                  @map("access_token_enc")
   refreshTokenEnc String?                 @map("refresh_token_enc")
+  // Harvest sends an account ID alongside the OAuth token; required on every API call as the
+  // `Harvest-Account-Id` header. Stored plaintext (it's not a secret on its own). Null for Monday.
+  harvestAccountId String?                @map("harvest_account_id")
   status          TrackerConnectionStatus @default(ok)
   lastSyncedAt    DateTime?               @map("last_synced_at")
   createdAt       DateTime                @default(now()) @map("created_at")
@@ -153,6 +161,26 @@ model TrackerConnection {
 
   @@unique([provider, workspace])
   @@map("tracker_connections")
+}
+
+/// Cached Harvest snapshot for a single linked project. One row per linked Torii project.
+/// Hours-only by design (D9). The full Harvest API payload is retained in `raw` for debugging
+/// but is never exposed by any API endpoint or UI.
+model ProjectHarvestSnapshot {
+  projectId             String   @id @map("project_id")
+  fetchedAt             DateTime @default(now()) @map("fetched_at")
+  budgetHours           Decimal? @db.Decimal(10, 2) @map("budget_hours")
+  spentHoursBillable    Decimal  @default(0) @db.Decimal(10, 2) @map("spent_hours_billable")
+  spentHoursNonbillable Decimal  @default(0) @db.Decimal(10, 2) @map("spent_hours_nonbillable")
+  // JSON array of per-(task, person) line items. Schema enforced at the API layer
+  // (HarvestSnapshotSchema with .strict() blocks any monetary keys from leaking in).
+  breakdown             Json     @default("[]")
+  // Raw Harvest API payload retained for debugging. Never exposed.
+  raw                   Json?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("project_harvest_snapshots")
 }
 
 model PhaseAuditLog {

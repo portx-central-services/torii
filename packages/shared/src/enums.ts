@@ -25,7 +25,7 @@ export const PHASES = [
 ] as const;
 export const PROJECT_STATES = ['OnTrack', 'AtRisk', 'Blocked', 'Done'] as const;
 export const ROLES = ['PM', 'Viewer'] as const;
-export const TRACKER_PROVIDERS = ['monday'] as const;
+export const TRACKER_PROVIDERS = ['monday', 'harvest'] as const;
 
 export const RAG_LEVELS = ['Red', 'Amber', 'Green'] as const;
 export const RISK_TYPES = [

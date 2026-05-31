@@ -9,10 +9,11 @@ import {
   type MondayItemSnapshot,
   type ProjectDetail,
 } from '../api/endpoints.js';
-import { PhaseBadge, StateBadge } from '../components/Badge.js';
+import { PhaseBadge, StateBadge, OnBudgetChip } from '../components/Badge.js';
 import { useIsPM } from '../auth/AuthProvider.js';
 import { ApiError } from '../api/client.js';
 import { AllocationsPanel } from '../components/AllocationsPanel.js';
+import { HarvestPanel } from '../components/HarvestPanel.js';
 
 type TimelineStep = {
   key: string;
@@ -30,6 +31,16 @@ export function ProjectDetailPage() {
     queryKey: ['project', id],
     queryFn: () => endpoints.getProject(id),
     enabled: !!id,
+  });
+
+  // Fetch the Harvest snapshot at the parent so both <OnBudgetChip> and <HarvestPanel>
+  // can read it from the same cache key. retry:false so a 404 (not yet refreshed) stays
+  // a 404 instead of bouncing.
+  const harvestSnapQ = useQuery({
+    queryKey: ['harvest-snapshot', id],
+    queryFn: () => endpoints.getHarvestSnapshot(id),
+    enabled: !!id && !!query.data?.harvestProjectId,
+    retry: false,
   });
 
   if (query.isLoading) return <div className="text-gray-500">Loading project...</div>;
@@ -69,6 +80,16 @@ export function ProjectDetailPage() {
               <span className="status-chip-label">State</span>
               <StateBadge state={project.state} />
             </div>
+            {harvestSnapQ.data && (
+              <div className="status-chip">
+                <span className="status-chip-label">Budget</span>
+                <OnBudgetChip
+                  budgetHours={harvestSnapQ.data.budgetHours}
+                  spentBillable={harvestSnapQ.data.spentHoursBillable}
+                  spentNonbillable={harvestSnapQ.data.spentHoursNonbillable}
+                />
+              </div>
+            )}
           </div>
         </div>
 
@@ -138,6 +159,10 @@ export function ProjectDetailPage() {
 
       {project.trackerRef && (
         <MondayDetailsPanel trackerRaw={project.trackerRaw} />
+      )}
+
+      {project.harvestProjectId && (
+        <HarvestPanel project={project} isPm={isPM} />
       )}
 
       <div className="detail-sync-footer">

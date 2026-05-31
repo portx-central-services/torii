@@ -15,6 +15,10 @@ const MONDAY_TOKEN_URL = 'https://auth.monday.com/oauth2/token';
 const OAUTH_STATE_COOKIE = 'torii_monday_oauth';
 const MONDAY_OAUTH_SCOPE = 'boards:read me:read';
 
+const HARVEST_AUTHORIZE_URL = 'https://id.getharvest.com/oauth2/authorize';
+const HARVEST_TOKEN_URL = 'https://id.getharvest.com/api/v2/oauth2/token';
+const HARVEST_OAUTH_STATE_COOKIE = 'torii_harvest_oauth';
+
 const idParams = z.object({ id: z.string().min(1) });
 
 const importBody = z.object({
@@ -27,6 +31,71 @@ interface MondayTokenResponse {
   refresh_token?: string;
   token_type?: string;
   scope?: string;
+}
+
+interface HarvestTokenResponse {
+  access_token: string;
+  refresh_token?: string;
+  token_type?: string;
+  expires_in?: number;
+  scope?: string;
+}
+
+/**
+ * Exchange a Harvest refresh token for a new access token (and possibly a new refresh
+ * token). Persists the encrypted result on the TrackerConnection row. Returns the new
+ * access token so the caller can immediately retry the failed request.
+ *
+ * Wrap any adapter call that throws `HarvestAuthError` with a single retry through this
+ * helper. Never log the access token, refresh token, or full response body.
+ */
+async function refreshHarvestAccessToken(
+  db: DB,
+  env: Env,
+  connectionId: string,
+): Promise<string> {
+  const conn = await db.trackerConnection.findUnique({ where: { id: connectionId } });
+  if (!conn) throw new NotFoundError('TrackerConnection not found');
+  if (conn.provider !== TrackerProvider.harvest) {
+    throw new ValidationError('refreshHarvestAccessToken called on a non-Harvest connection');
+  }
+  if (!conn.refreshTokenEnc) {
+    throw new ValidationError('No refresh token available; re-authorize via /api/tracker/harvest/connect');
+  }
+  const refreshToken = decryptToken(conn.refreshTokenEnc, env.TRACKER_TOKEN_KEY);
+  const body = new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+    client_id: env.HARVEST_CLIENT_ID,
+    client_secret: env.HARVEST_CLIENT_SECRET,
+  });
+  const res = await fetch(HARVEST_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    body,
+  });
+  if (!res.ok) {
+    await db.trackerConnection.update({
+      where: { id: connectionId },
+      data: { status: 'auth_failed' },
+    });
+    throw new ValidationError(`Harvest token refresh failed: HTTP ${res.status}`);
+  }
+  const token = (await res.json()) as HarvestTokenResponse;
+  if (!token.access_token) {
+    throw new ValidationError('Harvest refresh returned no access_token');
+  }
+  await db.trackerConnection.update({
+    where: { id: connectionId },
+    data: {
+      accessTokenEnc: encryptToken(token.access_token, env.TRACKER_TOKEN_KEY),
+      ...(token.refresh_token
+        ? { refreshTokenEnc: encryptToken(token.refresh_token, env.TRACKER_TOKEN_KEY) }
+        : {}),
+      status: 'ok',
+    },
+  });
+  return token.access_token;
 }
 
 interface RegisterTrackerOptions {
@@ -158,6 +227,199 @@ export function registerTrackerRoutes(
     });
 
     reply.redirect(`${env.WEB_BASE_URL}/trackers`);
+  });
+
+  function assertHarvestConfig(): void {
+    if (!env.HARVEST_CLIENT_ID || !env.HARVEST_CLIENT_SECRET || !env.HARVEST_REDIRECT_URI) {
+      throw new ForbiddenError('Harvest OAuth is not configured');
+    }
+    if (!env.TRACKER_TOKEN_KEY || !/^[0-9a-fA-F]{64}$/.test(env.TRACKER_TOKEN_KEY)) {
+      throw new ForbiddenError('TRACKER_TOKEN_KEY must be 64 hex characters (32 bytes)');
+    }
+  }
+
+  app.get('/api/tracker/harvest/connect', async (request, reply) => {
+    requireAdmin(request);
+    assertHarvestConfig();
+    const state = crypto.randomUUID();
+    reply.setCookie(HARVEST_OAUTH_STATE_COOKIE, state, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: env.NODE_ENV === 'production',
+      path: '/',
+      maxAge: 60 * 10,
+      signed: true,
+    });
+    const url = new URL(HARVEST_AUTHORIZE_URL);
+    url.searchParams.set('client_id', env.HARVEST_CLIENT_ID);
+    url.searchParams.set('redirect_uri', env.HARVEST_REDIRECT_URI);
+    url.searchParams.set('state', state);
+    url.searchParams.set('response_type', 'code');
+    reply.redirect(url.toString());
+  });
+
+  app.get('/api/tracker/harvest/callback', async (request, reply) => {
+    requireAdmin(request);
+    assertHarvestConfig();
+    const q = z.object({ code: z.string().min(1), state: z.string().min(1) }).parse(request.query);
+
+    const raw = request.cookies[HARVEST_OAUTH_STATE_COOKIE];
+    if (!raw) throw new ValidationError('Missing OAuth state cookie');
+    const unsigned = request.unsignCookie(raw);
+    if (!unsigned.valid || unsigned.value !== q.state) {
+      throw new ValidationError('Invalid OAuth state');
+    }
+    reply.clearCookie(HARVEST_OAUTH_STATE_COOKIE, { path: '/' });
+
+    // Exchange code for tokens. We deliberately don't log the response body — it
+    // carries the access token, refresh token, and scope (which includes the
+    // account ID). Only error categories are logged.
+    const body = new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: env.HARVEST_CLIENT_ID,
+      client_secret: env.HARVEST_CLIENT_SECRET,
+      code: q.code,
+      redirect_uri: env.HARVEST_REDIRECT_URI,
+    });
+    const tokenRes = await fetch(HARVEST_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body,
+    });
+    if (!tokenRes.ok) {
+      throw new ValidationError(`Harvest token exchange failed: HTTP ${tokenRes.status}`);
+    }
+    const token = (await tokenRes.json()) as HarvestTokenResponse;
+    if (!token.access_token) throw new ValidationError('Harvest returned no access_token');
+
+    // Discover the account ID via `GET id.getharvest.com/api/v2/accounts`. This is the
+    // canonical Harvest pattern — the OAuth response doesn't reliably encode the account
+    // ID in `scope`, so we ask Harvest directly. Authenticated with just the bearer token
+    // (no Harvest-Account-Id header, since we don't know it yet).
+    const accountsRes = await fetch('https://id.getharvest.com/api/v2/accounts', {
+      headers: {
+        Authorization: `Bearer ${token.access_token}`,
+        Accept: 'application/json',
+        'User-Agent': 'Torii (PortX delivery dashboard)',
+      },
+    });
+    if (!accountsRes.ok) {
+      throw new ValidationError(`Harvest accounts lookup failed: HTTP ${accountsRes.status}`);
+    }
+    const accountsBody = (await accountsRes.json()) as {
+      user?: { id?: number; first_name?: string; last_name?: string; email?: string };
+      accounts?: Array<{ id: number; name: string; product?: string }>;
+    };
+    // Prefer Harvest-product accounts (the user may also belong to a Forecast account).
+    const harvestAccount =
+      (accountsBody.accounts ?? []).find((a) => a.product === 'harvest') ??
+      (accountsBody.accounts ?? [])[0];
+    if (!harvestAccount) {
+      throw new ValidationError(
+        'No Harvest account is accessible to this token. Confirm the OAuth app is configured for Harvest (not Forecast) and re-authorize.',
+      );
+    }
+    const accountId = String(harvestAccount.id);
+    const me = accountsBody.user ?? {};
+
+    // Capture the workspace subdomain from `/v2/company` for building project URLs
+    // in the HarvestPanel. Falls back to `account-<id>` when not available.
+    const companyRes = await fetch('https://api.harvestapp.com/v2/company', {
+      headers: {
+        Authorization: `Bearer ${token.access_token}`,
+        'Harvest-Account-Id': accountId,
+        Accept: 'application/json',
+      },
+    });
+    let workspace = `account-${accountId}`;
+    if (companyRes.ok) {
+      const company = (await companyRes.json()) as { full_domain?: string; base_uri?: string; subdomain?: string };
+      // Prefer subdomain (e.g., "portx") if available; fall back to full_domain.
+      workspace = company.subdomain ?? company.full_domain ?? workspace;
+    }
+
+    await db.trackerConnection.upsert({
+      where: {
+        provider_workspace: { provider: TrackerProvider.harvest, workspace },
+      },
+      update: {
+        accessTokenEnc: encryptToken(token.access_token, env.TRACKER_TOKEN_KEY),
+        refreshTokenEnc: token.refresh_token ? encryptToken(token.refresh_token, env.TRACKER_TOKEN_KEY) : null,
+        harvestAccountId: accountId,
+        status: 'ok',
+      },
+      create: {
+        provider: TrackerProvider.harvest,
+        workspace,
+        accessTokenEnc: encryptToken(token.access_token, env.TRACKER_TOKEN_KEY),
+        refreshTokenEnc: token.refresh_token ? encryptToken(token.refresh_token, env.TRACKER_TOKEN_KEY) : null,
+        harvestAccountId: accountId,
+        status: 'ok',
+      },
+    });
+
+    app.log.info(
+      {
+        provider: 'harvest',
+        workspace,
+        userEmail: me.email ?? null,
+        accountId,
+      },
+      'Harvest connection persisted',
+    );
+
+    reply.redirect(`${env.WEB_BASE_URL}/trackers`);
+  });
+
+  /**
+   * List Harvest projects with their current Torii link state. Powers the bulk-link
+   * UI on /trackers. Admin-only since linking is admin-only.
+   */
+  app.get('/api/tracker/harvest/projects', async (request, reply) => {
+    requireAdmin(request);
+    const conn = await db.trackerConnection.findFirst({
+      where: { provider: TrackerProvider.harvest },
+      orderBy: { lastSyncedAt: 'desc' },
+    });
+    if (!conn) throw new NotFoundError('No active Harvest connection');
+    if (!conn.harvestAccountId) {
+      throw new ValidationError('Harvest connection is missing account ID; re-authorize');
+    }
+    const accessToken = decryptToken(conn.accessTokenEnc, env.TRACKER_TOKEN_KEY);
+    const adapter = getAdapterFactory(TrackerProvider.harvest)({
+      workspace: conn.workspace,
+      accessToken,
+      accountId: conn.harvestAccountId,
+    });
+
+    let externals: ExternalProject[];
+    try {
+      externals = await adapter.listProjects();
+    } catch (err) {
+      const errName = err instanceof Error ? err.name : '';
+      if (errName === 'HarvestRateLimitError') {
+        reply.code(429);
+        return { error: 'Harvest rate-limited; retry in 15s' };
+      }
+      throw err;
+    }
+
+    // Join: for each Harvest project, find any Torii project currently linked to it.
+    const linked = await db.project.findMany({
+      where: { harvestProjectId: { in: externals.map((e) => e.externalId) } },
+      select: { id: true, name: true, harvestProjectId: true },
+    });
+    const linkedByExternal = new Map(linked.map((p) => [p.harvestProjectId, p]));
+
+    return externals.map((e) => {
+      const link = linkedByExternal.get(e.externalId);
+      return {
+        harvestProjectId: e.externalId,
+        name: e.name ?? '',
+        linkedToiriProjectId: link?.id ?? null,
+        linkedToiriProjectName: link?.name ?? null,
+      };
+    });
   });
 
   app.post('/api/tracker/connections/:id/refresh', async (request) => {

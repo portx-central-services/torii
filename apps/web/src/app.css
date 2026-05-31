@@ -1805,6 +1805,49 @@ h3 {
   color: var(--paper);
   display: grid;
   place-items: center;
+  z-index: 3;
+}
+
+/*
+ * Budget-fill overlay rendered inside the bar when the "Show budget" toggle is on
+ * AND the project has a snapshot with a positive budget. Anchored to the bar's left
+ * edge, semi-transparent so the phase color shows through.
+ */
+.timeline-bar-budget-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  z-index: 1;
+  border-right: 1px solid rgba(0, 0, 0, 0.35);
+}
+
+/*
+ * Overflow tail for bars where spent > budget. Rendered from the budget-fill's
+ * right edge (which is at the bar's right edge in the over-budget case) to the
+ * bar's right edge with a diagonal-stripe pattern. Width 100% since the fill is
+ * already clamped at 100%; this element sits over the bar's right portion via
+ * `right: 0; width: <overflow%>`. Simplest impl: full-width red stripe with
+ * lower opacity layered over the entire bar — visually communicates "this is
+ * over budget" without computing a separate overage-width.
+ */
+.timeline-bar-budget-overflow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 2;
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(220, 38, 38, 0.45) 0,
+    rgba(220, 38, 38, 0.45) 6px,
+    transparent 6px,
+    transparent 12px
+  );
 }
 
 /*

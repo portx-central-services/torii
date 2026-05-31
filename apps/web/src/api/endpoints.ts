@@ -102,8 +102,14 @@ export interface Project {
   details: ProjectDetails;
   /** Derived from `details.fintech_parent`; read-only on the API. */
   projectType: ProjectType;
-  /** Reserved for a future Harvest integration; today always undefined/false. */
-  overBudget?: boolean;
+  /** Numeric Harvest project ID when the project is linked; null otherwise. */
+  harvestProjectId: string | null;
+  /** Derived from the cached Harvest snapshot; false when no snapshot or no budget. */
+  overBudget: boolean;
+  /** Budget hours from the cached snapshot. Null when no snapshot or no budget set. */
+  budgetHours: number | null;
+  /** Total spent hours (billable + non-billable). Null when no snapshot. */
+  spentHours: number | null;
   ownerId: string | null;
   trackerRef: { provider: string; externalId: string } | null;
   fieldMapping: Record<string, 'torii' | 'monday'>;
@@ -289,4 +295,51 @@ export const endpoints = {
     api.get<ProjectRiskUpdate[]>(`/api/projects/${projectId}/risk-updates`),
   upsertProjectRiskUpdate: (projectId: string, body: ProjectRiskUpdateUpsert) =>
     api.post<ProjectRiskUpdate>(`/api/projects/${projectId}/risk-updates`, body),
+
+  listHarvestProjects: () =>
+    api.get<HarvestProjectListItem[]>('/api/tracker/harvest/projects'),
+  getHarvestSnapshot: (projectId: string) =>
+    api.get<HarvestSnapshot>(`/api/projects/${projectId}/harvest`),
+  refreshHarvestSnapshot: (projectId: string) =>
+    api.post<HarvestSnapshot>(`/api/projects/${projectId}/harvest/refresh`, {}),
+  linkHarvestProject: (projectId: string, harvestProjectId: string) =>
+    api.post<{ ok: true }>(`/api/projects/${projectId}/harvest/link`, { harvestProjectId }),
+  unlinkHarvestProject: (projectId: string) =>
+    api.delete<void>(`/api/projects/${projectId}/harvest/link`),
 };
+
+/** Per-(task, person) row in a Harvest snapshot. Hours only — no cost data. */
+export interface HarvestBreakdownPerson {
+  personId: string;
+  personName: string;
+  hours: number;
+  archived?: boolean;
+}
+
+export interface HarvestBreakdownTask {
+  taskId: string;
+  taskName: string;
+  taskBudgetHours: number | null;
+  taskSpentHours: number;
+  people: HarvestBreakdownPerson[];
+}
+
+/** Row returned by `GET /api/tracker/harvest/projects` — one per Harvest project, with link state. */
+export interface HarvestProjectListItem {
+  harvestProjectId: string;
+  name: string;
+  linkedToiriProjectId: string | null;
+  linkedToiriProjectName: string | null;
+}
+
+/** Cached Harvest snapshot for a single project. Hours-only by design (D9). */
+export interface HarvestSnapshot {
+  projectId: string;
+  fetchedAt: string;
+  harvestProjectId: string;
+  harvestProjectUrl: string;
+  budgetHours: number | null;
+  spentHoursBillable: number;
+  spentHoursNonbillable: number;
+  breakdown: HarvestBreakdownTask[];
+}

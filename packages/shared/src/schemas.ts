@@ -125,6 +125,18 @@ export const ProjectOutSchema = z.object({
   details: ProjectDetailsSchema.optional(),
   /** Derived from `details.fintech_parent` server-side; not a persisted column. */
   projectType: ProjectTypeSchema,
+  /** Numeric Harvest project ID when the project is linked; null otherwise. */
+  harvestProjectId: z.string().nullable(),
+  /**
+   * Derived from the cached Harvest snapshot: `spent_hours > budget_hours` (strict).
+   * False when there's no snapshot, no link, or `budget_hours` is null/0. Read-only
+   * on the API — `projects` has no `over_budget` column.
+   */
+  overBudget: z.boolean(),
+  /** Budget hours from the cached snapshot. Null when no snapshot or no budget set. */
+  budgetHours: z.number().nullable(),
+  /** Total spent hours (billable + non-billable). Null when no snapshot. */
+  spentHours: z.number().nullable(),
   ownerId: z.string().nullable(),
   trackerRef: TrackerRefSchema,
   fieldMapping: FieldMappingSchema,
@@ -236,6 +248,51 @@ export const RiskListItemSchema = z.object({
   title: z.string(),
 });
 
+/**
+ * Per-(task, person) row in a Harvest snapshot. Hours-only by design.
+ *
+ * The `.strict()` is load-bearing: it actively rejects any payload that smuggles
+ * monetary keys (e.g., `costCents`) through this surface — defense-in-depth for D9.
+ */
+export const HarvestBreakdownPersonSchema = z
+  .object({
+    personId: z.string(),
+    personName: z.string(),
+    hours: z.number().nonnegative(),
+    archived: z.boolean().optional(),
+  })
+  .strict();
+
+export const HarvestBreakdownTaskSchema = z
+  .object({
+    taskId: z.string(),
+    taskName: z.string(),
+    taskBudgetHours: z.number().nullable(),
+    taskSpentHours: z.number().nonnegative(),
+    people: z.array(HarvestBreakdownPersonSchema),
+  })
+  .strict();
+
+/**
+ * Snapshot of a single Harvest project's hours data, cached on the Torii side.
+ *
+ * Intentionally omits cost / invoicing fields (D9). The raw Harvest payload is
+ * stored separately on `project_harvest_snapshots.raw` for debugging and is never
+ * surfaced through this schema.
+ */
+export const HarvestSnapshotSchema = z
+  .object({
+    projectId: z.string(),
+    fetchedAt: z.string(),
+    harvestProjectId: z.string(),
+    harvestProjectUrl: z.string(),
+    budgetHours: z.number().nullable(),
+    spentHoursBillable: z.number().nonnegative(),
+    spentHoursNonbillable: z.number().nonnegative(),
+    breakdown: z.array(HarvestBreakdownTaskSchema),
+  })
+  .strict();
+
 export type KeyDates = z.infer<typeof KeyDatesSchema>;
 export type ProjectDetails = z.infer<typeof ProjectDetailsSchema>;
 export type TrackerRef = z.infer<typeof TrackerRefSchema>;
@@ -250,3 +307,6 @@ export type PersonOut = z.infer<typeof PersonOutSchema>;
 export type ProjectRiskUpdateOut = z.infer<typeof ProjectRiskUpdateOutSchema>;
 export type ProjectRiskUpdateUpsert = z.infer<typeof ProjectRiskUpdateUpsertSchema>;
 export type RiskListItem = z.infer<typeof RiskListItemSchema>;
+export type HarvestBreakdownPerson = z.infer<typeof HarvestBreakdownPersonSchema>;
+export type HarvestBreakdownTask = z.infer<typeof HarvestBreakdownTaskSchema>;
+export type HarvestSnapshot = z.infer<typeof HarvestSnapshotSchema>;

@@ -33,6 +33,11 @@ const EnvSchema = z
     MONDAY_CLIENT_ID: z.string().default(''),
     MONDAY_CLIENT_SECRET: z.string().default(''),
     MONDAY_REDIRECT_URI: z.string().default(''),
+
+    HARVEST_CLIENT_ID: z.string().default(''),
+    HARVEST_CLIENT_SECRET: z.string().default(''),
+    HARVEST_REDIRECT_URI: z.string().default(''),
+
     TRACKER_TOKEN_KEY: z.string().default(''),
     ENABLE_SYNC_CRON: z.string().default('false').transform(boolFlag),
   })

@@ -184,6 +184,12 @@ interface Filters {
   /** When set, the person filter only matches projects where they hold this role. */
   role: '' | RoleKey;
   view: 'project' | 'person';
+  /**
+   * When true, each project bar with a Harvest snapshot renders a translucent
+   * budget-fill overlay (spent/budget); bars over 100% render an additional
+   * diagonal-stripe overflow tail. Off by default.
+   */
+  showBudget: boolean;
 }
 
 const DEFAULT_FILTERS: Filters = {
@@ -196,6 +202,7 @@ const DEFAULT_FILTERS: Filters = {
   person: '',
   role: '',
   view: 'project',
+  showBudget: false,
 };
 
 function monthsFromToday(months: number): Date {
@@ -374,6 +381,7 @@ export function TimelinePage() {
                     range={range}
                     risk={riskByProject.get(p.id) ?? null}
                     label={p.name}
+                    showBudget={filters.showBudget}
                     onClick={() => navigate(`/projects/${p.id}`)}
                   />
                 ))
@@ -394,6 +402,7 @@ export function TimelinePage() {
                         risk={riskByProject.get(p.id) ?? null}
                         label={p.name}
                         roleBadge={ROLE_LABELS[role]}
+                        showBudget={filters.showBudget}
                         onClick={() => navigate(`/projects/${p.id}`)}
                       />
                     ))}
@@ -413,6 +422,7 @@ function BarRow({
   risk,
   label,
   roleBadge,
+  showBudget,
   onClick,
 }: {
   project: Project;
@@ -421,6 +431,7 @@ function BarRow({
   risk: RiskListItem | null;
   label: string;
   roleBadge?: string;
+  showBudget: boolean;
   onClick: () => void;
 }) {
   const leftPct = Math.max(0, pctOf(bounds.start, range));
@@ -436,6 +447,20 @@ function BarRow({
   ]
     .filter(Boolean)
     .join(' ');
+
+  // Budget-fill geometry, only when the toggle is on AND the project has a snapshot
+  // with a positive budget. Projects without a Harvest link or without a budget
+  // render the bar normally (no fill, no overflow stripes).
+  const hasBudgetData =
+    showBudget &&
+    project.budgetHours !== null &&
+    project.budgetHours > 0 &&
+    project.spentHours !== null;
+  const budgetFillPct = hasBudgetData
+    ? Math.min(100, (project.spentHours! / project.budgetHours!) * 100)
+    : 0;
+  const showOverflow = hasBudgetData && project.spentHours! > project.budgetHours!;
+
   return (
     <button
       type="button"
@@ -457,6 +482,15 @@ function BarRow({
             color: PHASE_FG[project.phase],
           }}
         >
+          {hasBudgetData && (
+            <>
+              <span
+                className="timeline-bar-budget-fill"
+                style={{ width: `${budgetFillPct}%` }}
+              />
+              {showOverflow && <span className="timeline-bar-budget-overflow" />}
+            </>
+          )}
           <span className="timeline-bar-phase">{phaseLabel(project.phase)}</span>
           {risk && (
             <span
@@ -533,6 +567,25 @@ function TimelineFilters({
               onClick={() => onChange({ ...filters, view: 'person' })}
             >
               By person
+            </button>
+          </div>
+        </div>
+        <div className="field-wrap">
+          <label className="field-label">Show budget</label>
+          <div className="segmented">
+            <button
+              type="button"
+              className={!filters.showBudget ? 'on' : ''}
+              onClick={() => onChange({ ...filters, showBudget: false })}
+            >
+              Off
+            </button>
+            <button
+              type="button"
+              className={filters.showBudget ? 'on' : ''}
+              onClick={() => onChange({ ...filters, showBudget: true })}
+            >
+              On
             </button>
           </div>
         </div>

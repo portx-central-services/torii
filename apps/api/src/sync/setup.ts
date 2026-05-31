@@ -2,6 +2,7 @@ import cron, { type ScheduledTask } from 'node-cron';
 import type { FastifyBaseLogger } from 'fastify';
 import { registerAdapter } from './registry.js';
 import { MondayAdapter } from './monday/MondayAdapter.js';
+import { HarvestAdapter } from './harvest/HarvestAdapter.js';
 import { SyncEngine } from './engine.js';
 import type { DB } from '../db.js';
 
@@ -16,6 +17,16 @@ export interface SetupSyncOptions {
 
 export function setupSync(opts: SetupSyncOptions): SyncEngine {
   registerAdapter('monday', (cfg) => new MondayAdapter(cfg));
+  registerAdapter('harvest', (cfg) => {
+    if (!cfg.accountId) {
+      throw new Error('Harvest adapter requires accountId (the `Harvest-Account-Id` header value)');
+    }
+    return new HarvestAdapter({
+      workspace: cfg.workspace,
+      accessToken: cfg.accessToken,
+      accountId: cfg.accountId,
+    });
+  });
 
   const engine = new SyncEngine({
     db: opts.db,

@@ -17,8 +17,40 @@ import { requireUser, requirePM } from '../plugins/guards.js';
 
 const idParams = z.object({ id: z.string().min(1) });
 
-export function serializeProject(p: Project) {
+/**
+ * Optional shape of the joined Harvest snapshot. `serializeProject` accepts
+ * `Project & { harvestSnapshot?: ... }` so callers can include the relation when
+ * they want a populated `overBudget`; without it, `overBudget` is always false.
+ */
+type ProjectWithHarvest = Project & {
+  harvestSnapshot?: {
+    budgetHours: { toString(): string } | number | null;
+    spentHoursBillable: { toString(): string } | number;
+    spentHoursNonbillable: { toString(): string } | number;
+  } | null;
+};
+
+function deriveOverBudget(p: ProjectWithHarvest): boolean {
+  const snap = p.harvestSnapshot;
+  if (!snap) return false;
+  const budget = snap.budgetHours === null ? null : Number(snap.budgetHours);
+  if (budget === null || budget <= 0 || Number.isNaN(budget)) return false;
+  const spent = Number(snap.spentHoursBillable) + Number(snap.spentHoursNonbillable);
+  return spent > budget;
+}
+
+function snapshotHours(p: ProjectWithHarvest): { budgetHours: number | null; spentHours: number | null } {
+  const snap = p.harvestSnapshot;
+  if (!snap) return { budgetHours: null, spentHours: null };
+  return {
+    budgetHours: snap.budgetHours === null ? null : Number(snap.budgetHours),
+    spentHours: Number(snap.spentHoursBillable) + Number(snap.spentHoursNonbillable),
+  };
+}
+
+export function serializeProject(p: ProjectWithHarvest) {
   const details = (p.details ?? {}) as ProjectDetails;
+  const hours = snapshotHours(p);
   return {
     id: p.id,
     name: p.name,
@@ -28,6 +60,14 @@ export function serializeProject(p: Project) {
     details,
     /** Derived from `details.fintech_parent`; not a persisted column. */
     projectType: deriveProjectType(details as Record<string, unknown>),
+    /** Derived from the joined Harvest snapshot (hours-only). False without a snapshot. */
+    overBudget: deriveOverBudget(p),
+    /** Harvest project ID when linked; null otherwise. */
+    harvestProjectId: p.harvestProjectId ?? null,
+    /** Budget hours from the cached snapshot. Null when no snapshot or no budget set. */
+    budgetHours: hours.budgetHours,
+    /** Total spent hours (billable + non-billable). Null when no snapshot. */
+    spentHours: hours.spentHours,
     ownerId: p.ownerId,
     trackerRef: p.trackerRef,
     fieldMapping: p.fieldMapping,
@@ -63,7 +103,11 @@ export function registerProjectRoutes(
       orderBy = { name: 'asc' };
     }
 
-    const projects = await db.project.findMany({ where, orderBy });
+    const projects = await db.project.findMany({
+      where,
+      orderBy,
+      include: { harvestSnapshot: true },
+    });
     return projects.map(serializeProject);
   });
 
@@ -73,7 +117,7 @@ export function registerProjectRoutes(
 
     const project = await db.project.findUnique({
       where: { id },
-      include: { allocations: true },
+      include: { allocations: true, harvestSnapshot: true },
     });
     if (!project) throw new NotFoundError('Project not found');
 

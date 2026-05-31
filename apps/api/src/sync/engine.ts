@@ -6,6 +6,11 @@ import { decryptToken } from './encryption.js';
 import { getAdapterFactory } from './registry.js';
 import { mergeExternalIntoTorii, type ExistingProjectSlice } from './merge-fields.js';
 import { MondayAuthError, MondayRateLimitError } from './monday/MondayAdapter.js';
+import { HarvestAdapter, HarvestAuthError, HarvestRateLimitError } from './harvest/HarvestAdapter.js';
+
+/** Harvest's rate limit is 100 req / 15s. We pace at 50/15s to leave headroom for on-demand calls. */
+const HARVEST_BATCH_SIZE = 50;
+const HARVEST_BATCH_WAIT_MS = 15_000;
 
 export interface SyncResult {
   connectionId: string;
@@ -56,6 +61,14 @@ export class SyncEngine {
     const { db } = this.opts;
     const connection = await db.trackerConnection.findUnique({ where: { id: connectionId } });
     if (!connection) throw new Error(`TrackerConnection ${connectionId} not found`);
+
+    // Harvest's sync semantics are different from Monday's: Harvest never feeds the
+    // merge engine (no name/phase/details/keyDates to merge). Instead, refresh the
+    // cached `project_harvest_snapshots` row for every project linked to a Harvest
+    // project on this connection.
+    if (connection.provider === ('harvest' as TrackerProvider)) {
+      return this.syncHarvestConnection(connection);
+    }
 
     return this.runSync(connection, async (adapter) => {
       if (opts.force) {
@@ -211,6 +224,106 @@ export class SyncEngine {
       });
       return { scanned: 1, patched: Object.keys(patch).length > 0 ? 1 : 0 };
     });
+  }
+
+  /**
+   * Refresh the cached snapshot for every project linked to a Harvest project on
+   * this connection. Paces calls at `HARVEST_BATCH_SIZE` per `HARVEST_BATCH_WAIT_MS`
+   * to respect the 100 req / 15 sec limit (design D10). Per-project 429 / per-item
+   * errors are logged and skipped so the rest of the batch still gets refreshed.
+   */
+  private async syncHarvestConnection(connection: TrackerConnection): Promise<SyncResult> {
+    const { db } = this.opts;
+    const syncedAt = new Date();
+    if (!connection.harvestAccountId) {
+      return {
+        connectionId: connection.id,
+        status: TrackerConnectionStatus.auth_failed,
+        syncedAt,
+        projectsScanned: 0,
+        projectsPatched: 0,
+        error: 'Harvest connection is missing account ID',
+      };
+    }
+    const accessToken = decryptToken(connection.accessTokenEnc, this.opts.trackerTokenKey);
+    const adapter = new HarvestAdapter({
+      workspace: connection.workspace,
+      accessToken,
+      accountId: connection.harvestAccountId,
+    });
+
+    const linkedProjects = await db.project.findMany({
+      where: { harvestProjectId: { not: null } },
+    });
+
+    let patched = 0;
+    let status: TrackerConnectionStatus = TrackerConnectionStatus.ok;
+    let topLevelError: string | undefined;
+
+    for (let i = 0; i < linkedProjects.length; i += HARVEST_BATCH_SIZE) {
+      const batch = linkedProjects.slice(i, i + HARVEST_BATCH_SIZE);
+      for (const project of batch) {
+        if (!project.harvestProjectId) continue;
+        try {
+          const { snapshot, raw } = await adapter.getProjectSnapshot(project.harvestProjectId);
+          await db.projectHarvestSnapshot.upsert({
+            where: { projectId: project.id },
+            update: {
+              fetchedAt: new Date(snapshot.fetchedAt),
+              budgetHours: snapshot.budgetHours === null ? null : new Prisma.Decimal(snapshot.budgetHours),
+              spentHoursBillable: new Prisma.Decimal(snapshot.spentHoursBillable),
+              spentHoursNonbillable: new Prisma.Decimal(snapshot.spentHoursNonbillable),
+              breakdown: snapshot.breakdown as Prisma.InputJsonValue,
+              raw: (raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+            },
+            create: {
+              projectId: project.id,
+              fetchedAt: new Date(snapshot.fetchedAt),
+              budgetHours: snapshot.budgetHours === null ? null : new Prisma.Decimal(snapshot.budgetHours),
+              spentHoursBillable: new Prisma.Decimal(snapshot.spentHoursBillable),
+              spentHoursNonbillable: new Prisma.Decimal(snapshot.spentHoursNonbillable),
+              breakdown: snapshot.breakdown as Prisma.InputJsonValue,
+              raw: (raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+            },
+          });
+          patched += 1;
+        } catch (err) {
+          if (err instanceof HarvestAuthError) {
+            status = TrackerConnectionStatus.auth_failed;
+            topLevelError = 'Harvest auth failed; refresh credentials';
+            break;
+          }
+          if (err instanceof HarvestRateLimitError) {
+            // Per-project 429: skip this project, continue the rest of the batch.
+            console.warn('[SyncEngine.syncHarvestConnection] rate-limited on', project.harvestProjectId);
+            continue;
+          }
+          console.error('[SyncEngine.syncHarvestConnection] per-project error', {
+            projectId: project.id,
+            harvestProjectId: project.harvestProjectId,
+            err: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      if (status !== TrackerConnectionStatus.ok) break;
+      if (i + HARVEST_BATCH_SIZE < linkedProjects.length) {
+        await new Promise((resolve) => setTimeout(resolve, HARVEST_BATCH_WAIT_MS));
+      }
+    }
+
+    await db.trackerConnection.update({
+      where: { id: connection.id },
+      data: { status, lastSyncedAt: syncedAt },
+    });
+
+    return {
+      connectionId: connection.id,
+      status,
+      syncedAt,
+      projectsScanned: linkedProjects.length,
+      projectsPatched: patched,
+      ...(topLevelError ? { error: topLevelError } : {}),
+    };
   }
 
   /** Sync every connection that is not in auth_failed. Used by the cron tick. */
