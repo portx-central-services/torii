@@ -1,9 +1,12 @@
 import type {
+  DashboardSummary,
   Phase,
   ProjectState,
   Role,
 } from '@torii/shared';
 import { api } from './client.js';
+
+export type { DashboardSummary } from '@torii/shared';
 
 export interface MeResponse {
   authenticated: boolean;
@@ -28,7 +31,7 @@ export type ProjectDetailGroup = (typeof PROJECT_DETAIL_GROUPS)[number];
 export const PROJECT_DETAIL_FIELDS = [
   { key: 'project_manager', label: 'Project Manager', group: 'Team' },
   { key: 'solution_architect', label: 'Solution Architect', group: 'Team' },
-  { key: 'solution_consultant', label: 'Solution Consultant', group: 'Team' },
+  { key: 'solution_consultant', label: 'Senior Consultant', group: 'Team' },
   { key: 'customer_type', label: 'Customer Type', group: 'Customer' },
   { key: 'customer_status', label: 'Customer Status', group: 'Customer' },
   { key: 'primary_contact', label: 'Primary Contact', group: 'Customer' },
@@ -111,11 +114,16 @@ export interface Project {
   /** Total spent hours (billable + non-billable). Null when no snapshot. */
   spentHours: number | null;
   ownerId: string | null;
+  /** Resolved Person rows. Null when the FK isn't set; UI falls back to `details.*`. */
+  projectManager: Person | null;
+  solutionArchitect: Person | null;
+  solutionConsultant: Person | null;
   trackerRef: { provider: string; externalId: string } | null;
   fieldMapping: Record<string, 'torii' | 'monday'>;
   createdAt: string;
   updatedAt: string;
 }
+
 
 export interface RiskListItem {
   projectId: string;
@@ -192,6 +200,8 @@ export interface Person {
   role: Role;
   defaultCapacityPct: number;
   isAdmin: boolean;
+  /** Harvest user-ID bridge. Null until an admin links the Person on /trackers. */
+  harvestUserId: string | null;
 }
 
 export interface PersonAllocation {
@@ -253,8 +263,22 @@ export const endpoints = {
   ) => api.patch<Project>(`/api/projects/${id}`, body),
 
   listPeople: () => api.get<Person[]>('/api/people'),
+  getPerson: (id: string) => api.get<Person>(`/api/people/${id}`),
   personAllocations: (id: string, from: string, to: string) =>
     api.get<PersonAllocation[]>(`/api/people/${id}/allocations`, { from, to }),
+  /** Every project this person holds a role on (owner / pm / sa / sc). Same project may appear multiple times. */
+  personProjects: (id: string) =>
+    api.get<Array<{ role: 'owner' | 'pm' | 'sa' | 'sc'; project: Project }>>(`/api/people/${id}/projects`),
+  /** Per-project Allocations-vs-Actuals reconciliation rows for this Person. */
+  personReconciliation: (id: string) =>
+    api.get<PersonReconciliationRow[]>(`/api/people/${id}/reconciliation`),
+
+  listHarvestUsers: () =>
+    api.get<HarvestUserListItem[]>('/api/tracker/harvest/users'),
+  linkPersonToHarvestUser: (personId: string, harvestUserId: string) =>
+    api.post<{ ok: true }>(`/api/people/${personId}/harvest-link`, { harvestUserId }),
+  unlinkPersonHarvestUser: (personId: string) =>
+    api.delete<void>(`/api/people/${personId}/harvest-link`),
 
   createAllocation: (body: { projectId: string; personId: string; pct: number; start: string; end: string }) =>
     api.post<{ id: string }>('/api/allocations', body),
@@ -306,6 +330,9 @@ export const endpoints = {
     api.post<{ ok: true }>(`/api/projects/${projectId}/harvest/link`, { harvestProjectId }),
   unlinkHarvestProject: (projectId: string) =>
     api.delete<void>(`/api/projects/${projectId}/harvest/link`),
+
+  getDashboardSummary: () =>
+    api.get<DashboardSummary>('/api/dashboard/summary'),
 };
 
 /** Per-(task, person) row in a Harvest snapshot. Hours only — no cost data. */
@@ -330,6 +357,29 @@ export interface HarvestProjectListItem {
   name: string;
   linkedToiriProjectId: string | null;
   linkedToiriProjectName: string | null;
+}
+
+/** Row returned by `GET /api/tracker/harvest/users` — one per Harvest user, with Person link state. */
+export interface HarvestUserListItem {
+  harvestUserId: string;
+  name: string;
+  email: string;
+  linkedToiriPersonId: string | null;
+  linkedToiriPersonName: string | null;
+}
+
+/**
+ * One row of the per-person reconciliation endpoint. `actualHours`/`variance`/
+ * `variancePct` are null when the Person isn't linked to a Harvest user yet.
+ */
+export interface PersonReconciliationRow {
+  projectId: string;
+  projectName: string;
+  plannedHours: number;
+  actualHours: number | null;
+  variance: number | null;
+  variancePct: number | null;
+  linkedToHarvest: boolean;
 }
 
 /** Cached Harvest snapshot for a single project. Hours-only by design (D9). */

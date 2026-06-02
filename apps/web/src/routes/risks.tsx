@@ -76,7 +76,21 @@ export function RisksPage() {
   );
 }
 
-function RiskProjectCard({ projectId, headerName }: { projectId: string; headerName: string }) {
+export function RiskProjectCard({
+  projectId,
+  headerName,
+  /**
+   * When true (the default), the heading is a link to the project's detail page —
+   * useful on `/risks` where the card is the only entry point. Set to false when
+   * embedding the card ON the project's own detail page, since a self-link there
+   * is redundant noise.
+   */
+  linkToProject = true,
+}: {
+  projectId: string;
+  headerName: string;
+  linkToProject?: boolean;
+}) {
   const isPM = useIsPM();
   const history = useQuery({
     queryKey: ['risk-updates', projectId],
@@ -95,9 +109,13 @@ function RiskProjectCard({ projectId, headerName }: { projectId: string; headerN
     <section className="section-card">
       <div className="section-card-head">
         <h3>
-          <Link to={`/projects/${projectId}`} className="text-torii hover:underline">
-            {headerName}
-          </Link>
+          {linkToProject ? (
+            <Link to={`/projects/${projectId}`} className="text-torii hover:underline">
+              {headerName}
+            </Link>
+          ) : (
+            headerName
+          )}
         </h3>
         {isPM && !editing && (
           <button type="button" className="btn-secondary" onClick={() => setEditing(true)}>
@@ -108,6 +126,17 @@ function RiskProjectCard({ projectId, headerName }: { projectId: string; headerN
 
       {history.isLoading ? (
         <div className="text-sm text-gray-500">Loading history…</div>
+      ) : editing && isPM ? (
+        // Editing comes first: when the PM clicks "Add the first" on a project with
+        // no prior updates, `current` is still undefined — checking `!current` before
+        // `editing` would short-circuit back to the empty state instead of opening
+        // the form. RiskEditForm handles `initial: undefined` with sensible defaults.
+        <RiskEditForm
+          projectId={projectId}
+          initial={current}
+          onCancel={() => setEditing(false)}
+          onSaved={() => setEditing(false)}
+        />
       ) : !current ? (
         <div className="text-sm text-gray-500">
           No risk updates yet for this project.
@@ -125,16 +154,9 @@ function RiskProjectCard({ projectId, headerName }: { projectId: string; headerN
             </>
           )}
         </div>
-      ) : editing && isPM ? (
-        <RiskEditForm
-          projectId={projectId}
-          initial={current}
-          onCancel={() => setEditing(false)}
-          onSaved={() => setEditing(false)}
-        />
       ) : (
         <>
-          <CurrentRiskCard update={current} previousLevel={previous?.ragLevel ?? null} />
+          <CurrentRiskCard update={current} previous={previous ?? null} />
           {olderHistory.length > 0 && (
             <div className="risk-history">
               <button
@@ -161,16 +183,16 @@ function RiskProjectCard({ projectId, headerName }: { projectId: string; headerN
 
 function CurrentRiskCard({
   update,
-  previousLevel,
+  previous,
 }: {
   update: ProjectRiskUpdate;
-  previousLevel: RagLevel | null;
+  previous: ProjectRiskUpdate | null;
 }) {
   return (
     <div className="risk-card">
       <div className="risk-card-head">
         <RagChip level={update.ragLevel} />
-        <RagArrow current={update.ragLevel} previous={previousLevel} />
+        <RagArrow current={update.ragLevel} previous={previous?.ragLevel ?? null} />
         <span className="risk-card-week">Week of {update.weekOf}</span>
         <RiskStateBadge state={update.state} />
         <div className="risk-card-types">
@@ -182,7 +204,12 @@ function CurrentRiskCard({
         </div>
       </div>
       <RiskBody update={update} />
-      <div className="text-xs text-gray-500 mt-2">
+      <div className="risk-card-prev-week text-xs text-gray-500 mt-2">
+        {previous
+          ? `Last week: ${previous.ragLevel} / ${previous.state}`
+          : 'Last week: no update'}
+      </div>
+      <div className="text-xs text-gray-500 mt-1">
         Last updated by {update.authorName ?? update.authorId} at{' '}
         {new Date(update.updatedAt).toLocaleString()}
       </div>

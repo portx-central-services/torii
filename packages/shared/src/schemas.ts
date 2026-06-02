@@ -138,6 +138,14 @@ export const ProjectOutSchema = z.object({
   /** Total spent hours (billable + non-billable). Null when no snapshot. */
   spentHours: z.number().nullable(),
   ownerId: z.string().nullable(),
+  /**
+   * Resolved Person rows for the three role FKs. Null when the FK is unset.
+   * UI consumers prefer `Person.name` and fall back to the legacy `details.*`
+   * string when the Person is null. Not writable on POST/PATCH.
+   */
+  projectManager: PersonOutSchema.nullable(),
+  solutionArchitect: PersonOutSchema.nullable(),
+  solutionConsultant: PersonOutSchema.nullable(),
   trackerRef: TrackerRefSchema,
   fieldMapping: FieldMappingSchema,
   createdAt: z.string(),
@@ -307,6 +315,75 @@ export type PersonOut = z.infer<typeof PersonOutSchema>;
 export type ProjectRiskUpdateOut = z.infer<typeof ProjectRiskUpdateOutSchema>;
 export type ProjectRiskUpdateUpsert = z.infer<typeof ProjectRiskUpdateUpsertSchema>;
 export type RiskListItem = z.infer<typeof RiskListItemSchema>;
+
+/**
+ * One row per project on the per-person reconciliation endpoint
+ * (`GET /api/people/:id/reconciliation`). `actualHours`/`variance`/`variancePct`
+ * are null when the Person isn't linked to a Harvest user yet.
+ */
+export const PersonReconciliationRowSchema = z.object({
+  projectId: z.string(),
+  projectName: z.string(),
+  plannedHours: z.number().nonnegative(),
+  actualHours: z.number().nullable(),
+  /** Signed: actual − planned. Null when actualHours is null. */
+  variance: z.number().nullable(),
+  /** Signed percentage of planned. Null when actualHours is null or planned is 0. */
+  variancePct: z.number().nullable(),
+  linkedToHarvest: z.boolean(),
+});
+export type PersonReconciliationRow = z.infer<typeof PersonReconciliationRowSchema>;
 export type HarvestBreakdownPerson = z.infer<typeof HarvestBreakdownPersonSchema>;
 export type HarvestBreakdownTask = z.infer<typeof HarvestBreakdownTaskSchema>;
 export type HarvestSnapshot = z.infer<typeof HarvestSnapshotSchema>;
+
+/** Response shape for `GET /api/dashboard/summary`. Single bundle covering every dashboard section. */
+export const DashboardSummarySchema = z.object({
+  kpis: z.object({
+    active: z.number().int().nonnegative(),
+    atRisk: z.number().int().nonnegative(),
+    overBudget: z.number().int().nonnegative(),
+    launchingSoon: z.number().int().nonnegative(),
+    /** Null when no Done projects have both `baseline_go_live` and `actual_go_live` set. */
+    avgSlipDays: z.number().nullable(),
+    peopleInvolved: z.number().int().nonnegative(),
+  }),
+  thisWeekRag: z.object({
+    red: z.number().int().nonnegative(),
+    amber: z.number().int().nonnegative(),
+    green: z.number().int().nonnegative(),
+    prevRed: z.number().int().nonnegative(),
+    prevAmber: z.number().int().nonnegative(),
+    prevGreen: z.number().int().nonnegative(),
+  }),
+  schedulePressure: z.array(
+    z.object({
+      projectId: z.string(),
+      projectName: z.string(),
+      targetGoLive: isoDate,
+      daysUntil: z.number().int(),
+      phase: PhaseSchema,
+      ragLevel: RagLevelSchema.nullable(),
+      overBudget: z.boolean(),
+    }),
+  ),
+  noRiskUpdate: z.array(
+    z.object({
+      projectId: z.string(),
+      projectName: z.string(),
+      latestRagLevel: RagLevelSchema.nullable(),
+      weeksSinceLastUpdate: z.number().int().nullable(),
+    }),
+  ),
+  slipping: z.array(
+    z.object({
+      projectId: z.string(),
+      projectName: z.string(),
+      baselineGoLive: isoDate,
+      targetGoLive: isoDate,
+      slipDays: z.number().int().positive(),
+    }),
+  ),
+  phaseCounts: z.record(PhaseSchema, z.number().int().nonnegative()),
+});
+export type DashboardSummary = z.infer<typeof DashboardSummarySchema>;

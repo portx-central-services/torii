@@ -7,6 +7,7 @@ import { getAdapterFactory } from './registry.js';
 import { mergeExternalIntoTorii, type ExistingProjectSlice } from './merge-fields.js';
 import { MondayAuthError, MondayRateLimitError } from './monday/MondayAdapter.js';
 import { HarvestAdapter, HarvestAuthError, HarvestRateLimitError } from './harvest/HarvestAdapter.js';
+import { resolvePeopleIdsFromDetails } from './resolve-people.js';
 
 /** Harvest's rate limit is 100 req / 15s. We pace at 50/15s to leave headroom for on-demand calls. */
 const HARVEST_BATCH_SIZE = 50;
@@ -98,6 +99,13 @@ export class SyncEngine {
         const fieldMapping =
           (project.fieldMapping as Record<string, 'torii' | 'monday'> | null) ?? null;
         const patch = mergeExternalIntoTorii(existing, external, fieldMapping);
+        // Post-extraction person resolution: walk the merged details, return FK ids.
+        // May create Person rows for new names. Folded into the single project.update
+        // below so each project gets exactly one write per sync iteration.
+        const peopleIds = await resolvePeopleIdsFromDetails(
+          db,
+          patch.details ?? existing.details,
+        );
 
         await db.project.update({
           where: { id: project.id },
@@ -107,6 +115,9 @@ export class SyncEngine {
             ...(patch.phase !== undefined ? { phase: patch.phase } : {}),
             ...(patch.keyDates !== undefined ? { keyDates: patch.keyDates } : {}),
             ...(patch.details !== undefined ? { details: patch.details } : {}),
+            projectManagerId: peopleIds.projectManagerId,
+            solutionArchitectId: peopleIds.solutionArchitectId,
+            solutionConsultantId: peopleIds.solutionConsultantId,
           },
         });
         if (Object.keys(patch).length > 0) patched += 1;
@@ -162,6 +173,11 @@ export class SyncEngine {
         (project.fieldMapping as Record<string, 'torii' | 'monday'> | null) ?? null;
       const patch = mergeExternalIntoTorii(existing, external, fieldMapping);
 
+      const peopleIds = await resolvePeopleIdsFromDetails(
+        db,
+        patch.details ?? existing.details,
+      );
+
       await db.project.update({
         where: { id: project.id },
         data: {
@@ -170,6 +186,9 @@ export class SyncEngine {
           ...(patch.phase !== undefined ? { phase: patch.phase } : {}),
           ...(patch.keyDates !== undefined ? { keyDates: patch.keyDates } : {}),
           ...(patch.details !== undefined ? { details: patch.details } : {}),
+          projectManagerId: peopleIds.projectManagerId,
+          solutionArchitectId: peopleIds.solutionArchitectId,
+          solutionConsultantId: peopleIds.solutionConsultantId,
         },
       });
       if (Object.keys(patch).length > 0) patched += 1;
@@ -212,6 +231,11 @@ export class SyncEngine {
         (project.fieldMapping as Record<string, 'torii' | 'monday'> | null) ?? null;
       const patch = mergeExternalIntoTorii(existing, external, fieldMapping);
 
+      const peopleIds = await resolvePeopleIdsFromDetails(
+        db,
+        patch.details ?? existing.details,
+      );
+
       await db.project.update({
         where: { id: project.id },
         data: {
@@ -220,6 +244,9 @@ export class SyncEngine {
           ...(patch.phase !== undefined ? { phase: patch.phase } : {}),
           ...(patch.keyDates !== undefined ? { keyDates: patch.keyDates } : {}),
           ...(patch.details !== undefined ? { details: patch.details } : {}),
+          projectManagerId: peopleIds.projectManagerId,
+          solutionArchitectId: peopleIds.solutionArchitectId,
+          solutionConsultantId: peopleIds.solutionConsultantId,
         },
       });
       return { scanned: 1, patched: Object.keys(patch).length > 0 ? 1 : 0 };

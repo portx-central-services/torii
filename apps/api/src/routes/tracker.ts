@@ -8,6 +8,7 @@ import { requireAdmin, requirePM, requireUser } from '../plugins/guards.js';
 import { decryptToken, encryptToken } from '../sync/encryption.js';
 import type { SyncEngine } from '../sync/engine.js';
 import { getAdapterFactory } from '../sync/registry.js';
+import { HarvestAdapter } from '../sync/harvest/HarvestAdapter.js';
 import type { ExternalProject } from '@torii/shared';
 
 const MONDAY_AUTHORIZE_URL = 'https://auth.monday.com/oauth2/authorize';
@@ -418,6 +419,59 @@ export function registerTrackerRoutes(
         name: e.name ?? '',
         linkedToiriProjectId: link?.id ?? null,
         linkedToiriProjectName: link?.name ?? null,
+      };
+    });
+  });
+
+  /**
+   * List Harvest users joined with their current Torii Person link state. Admin-only
+   * since linking is admin-only. Powers the user-link table on /trackers that
+   * populates `Person.harvest_user_id` (the bridge needed by the reconciliation views).
+   */
+  app.get('/api/tracker/harvest/users', async (request, reply) => {
+    requireAdmin(request);
+    const conn = await db.trackerConnection.findFirst({
+      where: { provider: TrackerProvider.harvest },
+      orderBy: { lastSyncedAt: 'desc' },
+    });
+    if (!conn) throw new NotFoundError('No active Harvest connection');
+    if (!conn.harvestAccountId) {
+      throw new ValidationError('Harvest connection is missing account ID; re-authorize');
+    }
+    const accessToken = decryptToken(conn.accessTokenEnc, env.TRACKER_TOKEN_KEY);
+    const adapter = new HarvestAdapter({
+      workspace: conn.workspace,
+      accessToken,
+      accountId: conn.harvestAccountId,
+    });
+
+    let users: Array<{ id: string; name: string; email: string }>;
+    try {
+      users = await adapter.listUsers();
+    } catch (err) {
+      const errName = err instanceof Error ? err.name : '';
+      if (errName === 'HarvestRateLimitError') {
+        reply.code(429);
+        return { error: 'Harvest rate-limited; retry in 15s' };
+      }
+      throw err;
+    }
+
+    // Join: for each Harvest user, find any Torii Person currently linked to that id.
+    const linked = await db.person.findMany({
+      where: { harvestUserId: { in: users.map((u) => u.id) } },
+      select: { id: true, name: true, harvestUserId: true },
+    });
+    const linkedByHarvestId = new Map(linked.map((p) => [p.harvestUserId, p]));
+
+    return users.map((u) => {
+      const link = linkedByHarvestId.get(u.id);
+      return {
+        harvestUserId: u.id,
+        name: u.name,
+        email: u.email,
+        linkedToiriPersonId: link?.id ?? null,
+        linkedToiriPersonName: link?.name ?? null,
       };
     });
   });

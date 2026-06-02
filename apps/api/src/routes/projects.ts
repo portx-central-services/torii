@@ -22,13 +22,39 @@ const idParams = z.object({ id: z.string().min(1) });
  * `Project & { harvestSnapshot?: ... }` so callers can include the relation when
  * they want a populated `overBudget`; without it, `overBudget` is always false.
  */
+type JoinedPerson = {
+  id: string;
+  name: string;
+  email: string;
+  role: 'PM' | 'Viewer';
+  defaultCapacityPct: number;
+  isAdmin: boolean;
+};
+
 type ProjectWithHarvest = Project & {
   harvestSnapshot?: {
     budgetHours: { toString(): string } | number | null;
     spentHoursBillable: { toString(): string } | number;
     spentHoursNonbillable: { toString(): string } | number;
   } | null;
+  /** Optional joined Person rows for the three role FKs. Null when FK is null. */
+  projectManager?: JoinedPerson | null;
+  solutionArchitect?: JoinedPerson | null;
+  solutionConsultant?: JoinedPerson | null;
 };
+
+/** Coerce a joined Person row (or null/undefined) to the API output shape. */
+function personOut(p: JoinedPerson | null | undefined) {
+  if (!p) return null;
+  return {
+    id: p.id,
+    name: p.name,
+    email: p.email,
+    role: p.role,
+    defaultCapacityPct: p.defaultCapacityPct,
+    isAdmin: p.isAdmin,
+  };
+}
 
 function deriveOverBudget(p: ProjectWithHarvest): boolean {
   const snap = p.harvestSnapshot;
@@ -69,6 +95,11 @@ export function serializeProject(p: ProjectWithHarvest) {
     /** Total spent hours (billable + non-billable). Null when no snapshot. */
     spentHours: hours.spentHours,
     ownerId: p.ownerId,
+    /** Resolved Person rows for the three role FKs. Null when the FK is unset
+     *  or the row was not included in the query. UI falls back to `details.*`. */
+    projectManager: personOut(p.projectManager),
+    solutionArchitect: personOut(p.solutionArchitect),
+    solutionConsultant: personOut(p.solutionConsultant),
     trackerRef: p.trackerRef,
     fieldMapping: p.fieldMapping,
     createdAt: p.createdAt.toISOString(),
@@ -106,7 +137,12 @@ export function registerProjectRoutes(
     const projects = await db.project.findMany({
       where,
       orderBy,
-      include: { harvestSnapshot: true },
+      include: {
+        harvestSnapshot: true,
+        projectManager: true,
+        solutionArchitect: true,
+        solutionConsultant: true,
+      },
     });
     return projects.map(serializeProject);
   });
@@ -117,7 +153,13 @@ export function registerProjectRoutes(
 
     const project = await db.project.findUnique({
       where: { id },
-      include: { allocations: true, harvestSnapshot: true },
+      include: {
+        allocations: true,
+        harvestSnapshot: true,
+        projectManager: true,
+        solutionArchitect: true,
+        solutionConsultant: true,
+      },
     });
     if (!project) throw new NotFoundError('Project not found');
 

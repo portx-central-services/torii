@@ -79,7 +79,10 @@ export function TrackersPage() {
       )}
 
       {connections.some((c) => c.provider === 'harvest' && c.status !== 'auth_failed') && (
-        <HarvestLinkTable />
+        <>
+          <HarvestLinkTable />
+          <HarvestUserLinkTable />
+        </>
       )}
     </div>
   );
@@ -263,7 +266,12 @@ function HarvestLinkTable() {
     return <div className="empty text-red-700">Unable to load Harvest projects: {(harvestQ.error as Error).message}</div>;
   }
 
-  const harvestProjects = harvestQ.data ?? [];
+  // Sort alphabetically (case-insensitive) before render. Harvest's API returns
+  // projects in its own ordering; the link picker is much easier to scan when
+  // it's alphabetical.
+  const harvestProjects = (harvestQ.data ?? [])
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
   const toiriProjects = projectsQ.data ?? [];
 
   function handleSelect(harvestProjectId: string, toiriProjectId: string) {
@@ -326,6 +334,164 @@ function HarvestLinkTable() {
                             {p.name}
                           </option>
                         ))}
+                    </select>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Bulk-link UI for Person ↔ Harvest user. Lists every Harvest user from the
+ * active connection; each row offers a dropdown to pick the Torii Person to
+ * link to. This populates `Person.harvest_user_id`, the bridge that the
+ * Allocations-vs-Actuals reconciliation views depend on.
+ */
+function HarvestUserLinkTable() {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<Set<string>>(new Set());
+
+  const usersQ = useQuery({
+    queryKey: ['harvest-users'],
+    queryFn: () => endpoints.listHarvestUsers(),
+  });
+  const peopleQ = useQuery({
+    queryKey: ['people', 'harvest-user-link-table'],
+    queryFn: () => endpoints.listPeople(),
+  });
+
+  const linkMutation = useMutation({
+    mutationFn: async ({ personId, harvestUserId }: { personId: string; harvestUserId: string }) => {
+      return endpoints.linkPersonToHarvestUser(personId, harvestUserId);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['harvest-users'] });
+      await queryClient.invalidateQueries({ queryKey: ['people'] });
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Link failed'),
+  });
+
+  const unlinkMutation = useMutation({
+    mutationFn: async ({ personId }: { personId: string }) => endpoints.unlinkPersonHarvestUser(personId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['harvest-users'] });
+      await queryClient.invalidateQueries({ queryKey: ['people'] });
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Unlink failed'),
+  });
+
+  if (usersQ.isLoading) return <div className="empty">Loading Harvest users…</div>;
+  if (usersQ.isError) {
+    return (
+      <div className="empty text-red-700">
+        Unable to load Harvest users: {(usersQ.error as Error).message}
+      </div>
+    );
+  }
+
+  const harvestUsers = usersQ.data ?? [];
+  const toiriPeople = peopleQ.data ?? [];
+  // Torii People who aren't already linked to a different Harvest user — the
+  // unique constraint on `Person.harvest_user_id` enforces this server-side too.
+  const unlinkedPeople = toiriPeople.filter((p) => !p.harvestUserId);
+
+  function handleSelect(harvestUserId: string, personId: string) {
+    if (!personId) return;
+    setError(null);
+    setPending((s) => new Set(s).add(harvestUserId));
+    linkMutation.mutate(
+      { personId, harvestUserId },
+      {
+        onSettled: () =>
+          setPending((s) => {
+            const next = new Set(s);
+            next.delete(harvestUserId);
+            return next;
+          }),
+      },
+    );
+  }
+
+  function handleUnlink(harvestUserId: string, personId: string) {
+    setError(null);
+    setPending((s) => new Set(s).add(harvestUserId));
+    unlinkMutation.mutate(
+      { personId },
+      {
+        onSettled: () =>
+          setPending((s) => {
+            const next = new Set(s);
+            next.delete(harvestUserId);
+            return next;
+          }),
+      },
+    );
+  }
+
+  return (
+    <div className="section-card" style={{ padding: 16 }}>
+      <h3 style={{ marginTop: 0 }}>Link Harvest users</h3>
+      <div className="text-sm" style={{ color: 'var(--ink-500)', marginBottom: 12 }}>
+        Bridge each Harvest user to a Torii Person so the Allocations-vs-Actuals reconciliation can join planned hours to logged hours.
+      </div>
+      {error && <div className="text-red-700" style={{ marginBottom: 8 }}>{error}</div>}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--ink-200)' }}>
+              <th style={{ padding: '8px 4px' }}>Harvest user</th>
+              <th style={{ padding: '8px 4px' }}>Email</th>
+              <th style={{ padding: '8px 4px' }}>Torii Person</th>
+            </tr>
+          </thead>
+          <tbody>
+            {harvestUsers.map((u) => (
+              <tr key={u.harvestUserId} style={{ borderBottom: '1px solid var(--ink-100)' }}>
+                <td style={{ padding: '6px 4px', whiteSpace: 'nowrap' }}>{u.name}</td>
+                <td
+                  style={{
+                    padding: '6px 4px',
+                    fontFamily: 'monospace',
+                    fontSize: 11,
+                    color: 'var(--ink-500)',
+                  }}
+                >
+                  {u.email || '—'}
+                </td>
+                <td style={{ padding: '6px 4px' }}>
+                  {u.linkedToiriPersonId ? (
+                    <span className="text-sm">
+                      {u.linkedToiriPersonName ?? u.linkedToiriPersonId}{' '}
+                      <button
+                        type="button"
+                        className="text-sm text-gray-600 hover:underline"
+                        disabled={pending.has(u.harvestUserId)}
+                        onClick={() => handleUnlink(u.harvestUserId, u.linkedToiriPersonId!)}
+                        style={{ marginLeft: 8 }}
+                      >
+                        Unlink
+                      </button>
+                    </span>
+                  ) : (
+                    <select
+                      className="input"
+                      defaultValue=""
+                      disabled={pending.has(u.harvestUserId)}
+                      onChange={(e) => handleSelect(u.harvestUserId, e.target.value)}
+                    >
+                      <option value="">Skip</option>
+                      {unlinkedPeople.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                          {p.email.endsWith('@torii.unresolved') ? ' (import-only)' : ''}
+                        </option>
+                      ))}
                     </select>
                   )}
                 </td>

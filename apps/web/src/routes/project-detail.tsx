@@ -14,6 +14,8 @@ import { useIsPM } from '../auth/AuthProvider.js';
 import { ApiError } from '../api/client.js';
 import { AllocationsPanel } from '../components/AllocationsPanel.js';
 import { HarvestPanel } from '../components/HarvestPanel.js';
+import { ReconciliationPanel } from '../components/ReconciliationPanel.js';
+import { RiskProjectCard } from './risks.js';
 
 type TimelineStep = {
   key: string;
@@ -104,12 +106,33 @@ export function ProjectDetailPage() {
         </ol>
 
         <div className="detail-hero-team">
-          {teamFields.map((field) => (
-            <div key={field.key} className="team-row">
-              <span className="team-row-label">{field.label}</span>
-              <span className="team-row-value">{project.details?.[field.key] || '—'}</span>
-            </div>
-          ))}
+          {teamFields.map((field) => {
+            // Prefer the resolved Person (linked to /people/:id); fall back to the
+            // legacy `details.*` string when the FK is null; fall back to em-dash.
+            const resolved =
+              field.key === 'project_manager'
+                ? project.projectManager
+                : field.key === 'solution_architect'
+                  ? project.solutionArchitect
+                  : field.key === 'solution_consultant'
+                    ? project.solutionConsultant
+                    : null;
+            const legacyString = project.details?.[field.key];
+            return (
+              <div key={field.key} className="team-row">
+                <span className="team-row-label">{field.label}</span>
+                <span className="team-row-value">
+                  {resolved ? (
+                    <Link to={`/people/${resolved.id}`} className="text-torii hover:underline">
+                      {resolved.name}
+                    </Link>
+                  ) : (
+                    legacyString || '—'
+                  )}
+                </span>
+              </div>
+            );
+          })}
           {linkFields.map((field) => {
             const value = project.details?.[field.key];
             return (
@@ -156,6 +179,10 @@ export function ProjectDetailPage() {
       )}
 
       <AllocationsPanel projectId={project.id} canEdit={isPM} teamFields={teamFields} />
+
+      <ReconciliationPanel projectId={project.id} />
+
+      <RiskProjectCard projectId={project.id} headerName="Weekly risk update" linkToProject={false} />
 
       {project.trackerRef && (
         <MondayDetailsPanel trackerRaw={project.trackerRaw} />

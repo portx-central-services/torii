@@ -70,10 +70,17 @@ model Person {
   role                Role         @default(Viewer)
   defaultCapacityPct  Int          @default(100) @map("default_capacity_pct")
   isAdmin             Boolean      @default(false) @map("is_admin")
+  /// Harvest's numeric user ID, stored as text. Bridges Torii Person rows to
+  /// Harvest's per-(task, person) breakdown. Set by the upcoming Allocations ↔
+  /// Actuals reconciliation work; this change only adds the column.
+  harvestUserId       String?      @unique @map("harvest_user_id")
   createdAt           DateTime     @default(now()) @map("created_at")
   updatedAt           DateTime     @updatedAt @map("updated_at")
 
   ownedProjects       Project[]    @relation("ProjectOwner")
+  managedProjects     Project[]    @relation("ProjectManager")
+  architectProjects   Project[]    @relation("SolutionArchitect")
+  consultantProjects  Project[]    @relation("SolutionConsultant")
   allocations         Allocation[]
   sessions            Session[]
   phaseTransitions    PhaseAuditLog[]
@@ -114,10 +121,21 @@ model Project {
   fieldMapping  Json         @default("{}") @map("field_mapping")
   // Optional link to a Harvest project. Unique so two Torii projects can't claim the same Harvest project.
   harvestProjectId String?   @map("harvest_project_id")
+  // Person FKs for the three role assignments. Populated by the post-extraction
+  // resolver in the Monday sync. The legacy strings in `details` remain as the
+  // immutable Monday-extracted history; these FKs are the canonical Torii reference.
+  // Column name `solution_consultant_id` keeps storage-key consistency with the
+  // existing `details.solution_consultant` JSON key (display label is "Senior Consultant").
+  projectManagerId      String? @map("project_manager_id")
+  solutionArchitectId   String? @map("solution_architect_id")
+  solutionConsultantId  String? @map("solution_consultant_id")
   createdAt     DateTime     @default(now()) @map("created_at")
   updatedAt     DateTime     @updatedAt @map("updated_at")
 
   owner             Person?                 @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  projectManager    Person?                 @relation("ProjectManager", fields: [projectManagerId], references: [id], onDelete: SetNull)
+  solutionArchitect Person?                 @relation("SolutionArchitect", fields: [solutionArchitectId], references: [id], onDelete: SetNull)
+  solutionConsultant Person?                @relation("SolutionConsultant", fields: [solutionConsultantId], references: [id], onDelete: SetNull)
   allocations       Allocation[]
   phaseTransitions  PhaseAuditLog[]
   riskUpdates       ProjectRiskUpdate[]

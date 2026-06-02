@@ -51,6 +51,20 @@ interface HarvestProjectsPage {
   page: number;
 }
 
+interface HarvestUserRow {
+  id: number;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  is_active?: boolean;
+}
+
+interface HarvestUsersPage {
+  users: HarvestUserRow[];
+  total_pages: number;
+  page: number;
+}
+
 interface HarvestTaskRef {
   id: number;
   name: string;
@@ -162,6 +176,28 @@ export class HarvestAdapter implements TrackerAdapter {
       page += 1;
     } while (page <= totalPages);
     return items;
+  }
+
+  /**
+   * Every active Harvest user across the workspace. Paged sequentially. Powers
+   * the Person → Harvest-user link table on /trackers.
+   */
+  async listUsers(): Promise<Array<{ id: string; name: string; email: string }>> {
+    const users: Array<{ id: string; name: string; email: string }> = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const data = await this.request<HarvestUsersPage>(
+        `/users?is_active=true&per_page=100&page=${page}`,
+      );
+      for (const u of data.users ?? []) {
+        const name = [u.first_name, u.last_name].filter(Boolean).join(' ').trim() || u.email || `harvest-user-${u.id}`;
+        users.push({ id: String(u.id), name, email: u.email ?? '' });
+      }
+      totalPages = data.total_pages || 1;
+      page += 1;
+    } while (page <= totalPages);
+    return users;
   }
 
   async getProject(externalId: string): Promise<ExternalProject | null> {

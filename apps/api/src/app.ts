@@ -17,6 +17,7 @@ import { registerPreferencesRoutes } from './routes/preferences.js';
 import { registerRiskRoutes } from './routes/risks.js';
 import { registerRiskUpdateRoutes } from './routes/risk-updates.js';
 import { registerHarvestProjectsRoutes } from './routes/harvest-projects.js';
+import { registerDashboardRoutes } from './routes/dashboard.js';
 import { setupSync } from './sync/setup.js';
 import { getPrisma, type DB } from './db.js';
 import type { Env } from './env.js';
@@ -47,13 +48,14 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
 
   await registerAuthRoutes(app, { db, env: opts.env });
   registerProjectRoutes(app, { db });
-  registerPeopleRoutes(app, { db });
+  registerPeopleRoutes(app, { db, env: opts.env });
   registerAllocationRoutes(app, { db });
   registerCapacityRoutes(app, { db });
   registerPreferencesRoutes(app, { db });
   registerRiskRoutes(app, { db });
   registerRiskUpdateRoutes(app, { db });
   registerHarvestProjectsRoutes(app, { db, env: opts.env });
+  registerDashboardRoutes(app, { db });
 
   const engine = setupSync({
     db,

@@ -68,7 +68,7 @@ describe('projects routes', () => {
       expect(db.project.findMany).toHaveBeenCalledWith({
         where: {},
         orderBy: { name: 'asc' },
-        include: { harvestSnapshot: true },
+        include: { harvestSnapshot: true, projectManager: true, solutionArchitect: true, solutionConsultant: true },
       });
     });
 
@@ -98,7 +98,7 @@ describe('projects routes', () => {
       expect(db.project.findMany).toHaveBeenCalledWith({
         where: { phase: 'Development', state: 'Blocked' },
         orderBy: { name: 'asc' },
-        include: { harvestSnapshot: true },
+        include: { harvestSnapshot: true, projectManager: true, solutionArchitect: true, solutionConsultant: true },
       });
     });
 

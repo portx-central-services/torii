@@ -11,6 +11,7 @@ import {
 import {
   endpoints,
   PROJECT_TYPES,
+  type Person,
   type Project,
   type ProjectType,
   type RagLevel,
@@ -98,7 +99,7 @@ function pctOf(d: Date, range: VisibleRange): number {
  * 7-phase palette (slate → violet → magenta → cyan → green → amber → mint). Saturated
  * because the bar's color is the primary phase signal (no per-phase ticks anymore).
  */
-const PHASE_BG: Record<Phase, string> = {
+export const PHASE_BG: Record<Phase, string> = {
   Backlog: '#5a6378',
   Initiation: '#7359FE',
   Design: '#B825D0',
@@ -147,27 +148,37 @@ const ROLE_LABELS: Record<RoleKey, string> = {
   solution_consultant: 'SC',
 };
 
-/** All distinct people across PM/SA/SC on the given projects, sorted alphabetically. */
-function collectPeople(projects: readonly Project[]): string[] {
-  const set = new Set<string>();
-  for (const p of projects) {
-    for (const key of ROLE_KEYS) {
-      const v = p.details?.[key]?.trim();
-      if (v) set.add(v);
-    }
-  }
-  return [...set].sort((a, b) => a.localeCompare(b));
-}
-
 /**
- * Per-(project, role) entries. A project that has Aaron as PM, Vitor as SA
- * and Halan as SC produces three entries. Used by the by-person view.
+ * Per-(project, role) entries for the by-person view. Each entry prefers the
+ * resolved Person row (with id + name); falls back to the legacy `details.*`
+ * string when no Person is linked. String-fallback entries can't link to
+ * `/people/:id` since there's no Person row to point at.
  */
-function projectRoleEntries(project: Project): Array<{ person: string; role: RoleKey }> {
-  const out: Array<{ person: string; role: RoleKey }> = [];
-  for (const role of ROLE_KEYS) {
-    const person = project.details?.[role]?.trim();
-    if (person) out.push({ person, role });
+interface RoleEntry {
+  /** Stable group key — Person.id when available, else the lowercased string. */
+  key: string;
+  /** Display name. */
+  name: string;
+  /** Person id when the entry came from a resolved Person, null on string fallback. */
+  personId: string | null;
+  role: RoleKey;
+}
+function projectRoleEntries(project: Project): RoleEntry[] {
+  const out: RoleEntry[] = [];
+  const sources: Array<{ role: RoleKey; person: Project['projectManager']; key: RoleKey }> = [
+    { role: 'project_manager', person: project.projectManager, key: 'project_manager' },
+    { role: 'solution_architect', person: project.solutionArchitect, key: 'solution_architect' },
+    { role: 'solution_consultant', person: project.solutionConsultant, key: 'solution_consultant' },
+  ];
+  for (const s of sources) {
+    if (s.person) {
+      out.push({ key: s.person.id, name: s.person.name, personId: s.person.id, role: s.role });
+    } else {
+      const fallback = project.details?.[s.key]?.trim();
+      if (fallback) {
+        out.push({ key: `str:${fallback.toLowerCase()}`, name: fallback, personId: null, role: s.role });
+      }
+    }
   }
   return out;
 }
@@ -241,7 +252,18 @@ export function TimelinePage() {
   }, [today, range]);
 
   const allProjects = projectsQ.data ?? [];
-  const peopleOptions = useMemo(() => collectPeople(allProjects), [allProjects]);
+  // Person dropdown is driven by the canonical Person table now, not by walking
+  // the string `details.*` values. Each option's value is the Person.id; the
+  // filter then compares against `project.projectManagerId` / `solutionArchitectId`
+  // / `solutionConsultantId` / `ownerId` (all FK columns).
+  const peopleQ = useQuery({
+    queryKey: ['people', 'timeline'],
+    queryFn: () => endpoints.listPeople(),
+  });
+  const peopleOptions = useMemo(() => {
+    const list = peopleQ.data ?? [];
+    return list.slice().sort((a, b) => a.name.localeCompare(b.name));
+  }, [peopleQ.data]);
 
   const visibleProjects = useMemo(() => {
     return allProjects
@@ -265,13 +287,24 @@ export function TimelinePage() {
         // Person + role. With a role selected, the named person must hold that
         // specific role. With no role, they need only hold any of PM/SA/SC.
         // With only a role (no person), the project must have someone in that role.
+        // Person filter compares against the joined Person's id (FK target), not
+        // against free-form `details.*` strings. The dropdown's `value` is a Person.id.
+        const personIdForRole = (key: RoleKey): string | null => {
+          if (key === 'project_manager') return p.projectManager?.id ?? null;
+          if (key === 'solution_architect') return p.solutionArchitect?.id ?? null;
+          return p.solutionConsultant?.id ?? null;
+        };
         if (filters.person && filters.role) {
-          if (p.details?.[filters.role]?.trim() !== filters.person) return false;
+          if (personIdForRole(filters.role) !== filters.person) return false;
         } else if (filters.person) {
-          const inAnyRole = ROLE_KEYS.some((k) => p.details?.[k]?.trim() === filters.person);
-          if (!inAnyRole) return false;
+          const anyMatch =
+            p.projectManager?.id === filters.person ||
+            p.solutionArchitect?.id === filters.person ||
+            p.solutionConsultant?.id === filters.person ||
+            p.ownerId === filters.person;
+          if (!anyMatch) return false;
         } else if (filters.role) {
-          if (!p.details?.[filters.role]?.trim()) return false;
+          if (!personIdForRole(filters.role)) return false;
         }
         return true;
       });
@@ -309,26 +342,43 @@ export function TimelinePage() {
 
   const ticks = useMemo(() => monthTicks(range), [range]);
 
-  /** Group filtered projects by person for the by-person view. */
+  /**
+   * Group filtered projects by person for the by-person view. Each group's key
+   * is the Person.id when available, or `str:<name>` for string-fallback rows.
+   * Sorted alphabetically by display name.
+   */
   const byPerson = useMemo(() => {
     if (filters.view !== 'person') return null;
-    const map = new Map<string, Array<{ p: Project; bounds: ProjectBounds; role: RoleKey }>>();
+    interface Group {
+      key: string;
+      displayName: string;
+      personId: string | null;
+      rows: Array<{ p: Project; bounds: ProjectBounds; role: RoleKey }>;
+    }
+    const map = new Map<string, Group>();
     for (const { p, bounds } of visibleProjects) {
-      for (const { person, role } of projectRoleEntries(p)) {
-        // When a person filter is set, only include entries for that person.
-        if (filters.person && person !== filters.person) continue;
-        // When a role filter is set, only include entries for that role.
-        if (filters.role && role !== filters.role) continue;
-        if (!map.has(person)) map.set(person, []);
-        map.get(person)!.push({ p, bounds, role });
+      for (const entry of projectRoleEntries(p)) {
+        // When a person filter is set, only include resolved-Person entries
+        // whose id matches. String-fallback entries can't satisfy a Person-id filter.
+        if (filters.person && entry.personId !== filters.person) continue;
+        if (filters.role && entry.role !== filters.role) continue;
+        if (!map.has(entry.key)) {
+          map.set(entry.key, {
+            key: entry.key,
+            displayName: entry.name,
+            personId: entry.personId,
+            rows: [],
+          });
+        }
+        map.get(entry.key)!.rows.push({ p, bounds, role: entry.role });
       }
     }
-    return [...map.entries()]
-      .map(([person, rows]) => ({
-        person,
-        rows: rows.slice().sort((a, b) => a.bounds.start.getTime() - b.bounds.start.getTime()),
+    return [...map.values()]
+      .map((g) => ({
+        ...g,
+        rows: g.rows.slice().sort((a, b) => a.bounds.start.getTime() - b.bounds.start.getTime()),
       }))
-      .sort((a, b) => a.person.localeCompare(b.person));
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
   }, [visibleProjects, filters.view, filters.person, filters.role]);
 
   return (
@@ -385,17 +435,25 @@ export function TimelinePage() {
                     onClick={() => navigate(`/projects/${p.id}`)}
                   />
                 ))
-              : (byPerson ?? []).map(({ person, rows }) => (
-                  <div key={person} className="timeline-person-group">
+              : (byPerson ?? []).map((group) => (
+                  <div key={group.key} className="timeline-person-group">
                     <div className="timeline-person-header">
-                      <span className="timeline-person-name">{person}</span>
+                      <span className="timeline-person-name">
+                        {group.personId ? (
+                          <a href={`/people/${group.personId}`} className="text-torii hover:underline">
+                            {group.displayName}
+                          </a>
+                        ) : (
+                          group.displayName
+                        )}
+                      </span>
                       <span className="timeline-person-count">
-                        {rows.length} project{rows.length === 1 ? '' : 's'}
+                        {group.rows.length} project{group.rows.length === 1 ? '' : 's'}
                       </span>
                     </div>
-                    {rows.map(({ p, bounds, role }) => (
+                    {group.rows.map(({ p, bounds, role }) => (
                       <BarRow
-                        key={`${person}:${role}:${p.id}`}
+                        key={`${group.key}:${role}:${p.id}`}
                         project={p}
                         bounds={bounds}
                         range={range}
@@ -539,7 +597,7 @@ function TimelineFilters({
 }: {
   filters: Filters;
   onChange: (f: Filters) => void;
-  peopleOptions: readonly string[];
+  peopleOptions: readonly Person[];
 }) {
   function toggle<T>(set: Set<T>, value: T): Set<T> {
     const next = new Set(set);
@@ -677,8 +735,8 @@ function TimelineFilters({
           >
             <option value="">All people</option>
             {peopleOptions.map((p) => (
-              <option key={p} value={p}>
-                {p}
+              <option key={p.id} value={p.id}>
+                {p.name}
               </option>
             ))}
           </select>

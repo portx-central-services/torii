@@ -28,13 +28,79 @@ interface Filters {
   owner: string;
 }
 
+/**
+ * Single-selected KPI tile filter. `null` = no tile filter active. The tiles compose
+ * with the search input and the existing dropdown filters via AND.
+ */
+type TileFilter = null | 'active' | 'on-track' | 'at-risk' | 'blocked' | 'go-live-60d';
+
 const columnHelper = createColumnHelper<Project>();
+
+/** Test whether a project falls within the "Go-Live in the next 60 days" window. */
+function isGoLiveSoon(p: Project, now: number, ms60d: number): boolean {
+  const target = p.keyDates.target_go_live;
+  if (!target) return false;
+  const ts = new Date(target).getTime();
+  return ts >= now && ts - now <= ms60d && p.state !== 'Done';
+}
+
+function matchesTile(p: Project, tile: TileFilter, now: number, ms60d: number): boolean {
+  switch (tile) {
+    case null:
+      return true;
+    case 'active':
+      return (
+        (p.state === 'OnTrack' || p.state === 'AtRisk' || p.state === 'Blocked') &&
+        p.phase !== 'Backlog'
+      );
+    case 'on-track':
+      return p.state === 'OnTrack';
+    case 'at-risk':
+      return p.state === 'AtRisk';
+    case 'blocked':
+      return p.state === 'Blocked';
+    case 'go-live-60d':
+      return isGoLiveSoon(p, now, ms60d);
+  }
+}
+
+/** Build a case-insensitive haystack of every searchable property on a project. */
+function searchHaystack(p: Project): string {
+  const d = p.details ?? {};
+  return [
+    p.name,
+    p.state,
+    p.phase,
+    p.ownerId ?? '',
+    // Resolved Person names — searching by Person.name surfaces the project even
+    // when the legacy `details.*` string is stale or formatted differently.
+    p.projectManager?.name ?? '',
+    p.solutionArchitect?.name ?? '',
+    p.solutionConsultant?.name ?? '',
+    // Legacy strings stay in the haystack as fallback (cheap; covers the edge
+    // case where the FK is null but the string is set).
+    d.project_manager ?? '',
+    d.solution_architect ?? '',
+    d.solution_consultant ?? '',
+    d.core_solution ?? '',
+    d.core_vendor ?? '',
+    d.customer_type ?? '',
+    d.customer_status ?? '',
+    d.finance_use_case ?? '',
+    d.use_case_group ?? '',
+    d.primary_contact ?? '',
+  ]
+    .join(' ')
+    .toLowerCase();
+}
 
 export function ProjectsListPage() {
   const isPM = useIsPM();
   const [filters, setFilters] = useState<Filters>({ phase: '', state: '', owner: '' });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'name', desc: false }]);
   const [createOpen, setCreateOpen] = useState(false);
+  const [tileFilter, setTileFilter] = useState<TileFilter>(null);
+  const [search, setSearch] = useState('');
 
   const query = useQuery({
     queryKey: ['projects', filters],
@@ -83,18 +149,33 @@ export function ProjectsListPage() {
     });
   }
 
-  const projects = query.data ?? [];
-  const now = Date.now();
+  const allProjects = query.data ?? [];
+
+  // `Date.now()` returns a fresh value on every render — keep it OUT of memo deps,
+  // otherwise the memo never memoizes and the filtered `projects` array gets a
+  // fresh reference per keystroke. React Table then rebuilds its row model for
+  // every keystroke, which made the page unresponsive at ~200 rows.
   const ms60d = 60 * 24 * 60 * 60 * 1000;
-  const onTrack = projects.filter((p) => p.state === 'OnTrack').length;
-  const atRisk = projects.filter((p) => p.state === 'AtRisk').length;
-  const blocked = projects.filter((p) => p.state === 'Blocked').length;
-  const goingLiveSoon = projects.filter((p) => {
-    const target = p.keyDates.target_go_live;
-    if (!target) return false;
-    const ts = new Date(target).getTime();
-    return ts >= now && ts - now <= ms60d;
-  }).length;
+
+  // KPI counts reflect the whole fetched portfolio (already narrowed by the API-side
+  // phase/state/owner filters), NOT the in-memory tile + search filters — the tiles
+  // always show how many projects WOULD match if you clicked them. These run every
+  // render (cheap; no memoization needed for a ~200-row count loop).
+  const onTrack = allProjects.filter((p) => p.state === 'OnTrack').length;
+  const atRisk = allProjects.filter((p) => p.state === 'AtRisk').length;
+  const blocked = allProjects.filter((p) => p.state === 'Blocked').length;
+  const goingLiveSoon = allProjects.filter((p) => isGoLiveSoon(p, Date.now(), ms60d)).length;
+
+  // The list rendered in the table is filtered by tile + search, composed via AND
+  // with the dropdown filters already applied at the API layer. `now` is computed
+  // inside the callback so it isn't a dep — see comment above.
+  const projects = useMemo(() => {
+    const now = Date.now();
+    const needle = search.trim().toLowerCase();
+    return allProjects
+      .filter((p) => matchesTile(p, tileFilter, now, ms60d))
+      .filter((p) => (needle ? searchHaystack(p).includes(needle) : true));
+  }, [allProjects, tileFilter, search, ms60d]);
 
   const columns = useMemo(
     () => [
@@ -138,31 +219,47 @@ export function ProjectsListPage() {
             </span>
           ) : null,
       }),
-      ...PROJECT_DETAIL_FIELDS.map((field) =>
-        columnHelper.accessor((p) => p.details?.[field.key] || undefined, {
-          id: field.key,
-          header: field.label,
-          // Empty values always sort to the bottom regardless of direction.
-          sortUndefined: 'last',
-          cell: (ctx) => {
-            const value = ctx.getValue();
-            if (!value) return <span className="text-gray-400">—</span>;
-            if ('isLink' in field && field.isLink) {
-              return (
-                <a
-                  href={value}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-torii hover:underline"
-                >
-                  Open
-                </a>
-              );
-            }
-            return value;
+      ...PROJECT_DETAIL_FIELDS.map((field) => {
+        // For the three role fields, the column's "value" is the resolved Person
+        // name (with link in the cell), falling back to the legacy `details.*` string
+        // when no Person is linked. Other fields read directly from `details`.
+        const personGetter = (p: Project) =>
+          field.key === 'project_manager'
+            ? p.projectManager
+            : field.key === 'solution_architect'
+              ? p.solutionArchitect
+              : field.key === 'solution_consultant'
+                ? p.solutionConsultant
+                : null;
+        return columnHelper.accessor(
+          (p) => personGetter(p)?.name ?? p.details?.[field.key] ?? undefined,
+          {
+            id: field.key,
+            header: field.label,
+            sortUndefined: 'last',
+            cell: (ctx) => {
+              const person = personGetter(ctx.row.original);
+              const value = ctx.getValue();
+              if (!value) return <span className="text-gray-400">—</span>;
+              if (person) {
+                return (
+                  <Link to={`/people/${person.id}`} className="text-torii hover:underline">
+                    {person.name}
+                  </Link>
+                );
+              }
+              if ('isLink' in field && field.isLink) {
+                return (
+                  <a href={value} target="_blank" rel="noreferrer" className="text-torii hover:underline">
+                    Open
+                  </a>
+                );
+              }
+              return value;
+            },
           },
-        }),
-      ),
+        );
+      }),
     ],
     [],
   );
@@ -183,35 +280,69 @@ export function ProjectsListPage() {
         <div className="page-header-title">
           <span className="overline">Delivery Portfolio</span>
           <h1>Projects</h1>
-          <div className="page-sub">{projects.length} active projects</div>
+          <div className="page-sub">
+            {projects.length === allProjects.length
+              ? `${allProjects.length} projects`
+              : `${projects.length} of ${allProjects.length} projects shown`}
+          </div>
         </div>
       </div>
 
       <div className="kpi-row">
-        <div className="kpi accent">
-          <div className="kpi-label">Active</div>
-          <div className="kpi-value">{projects.length}</div>
-          <div className="kpi-sub">current portfolio</div>
+        <TileButton
+          label="Active"
+          value={allProjects.filter((p) => matchesTile(p, 'active', Date.now(), ms60d)).length}
+          sub="state ≠ Done, phase ≠ Backlog"
+          active={tileFilter === 'active'}
+          onClick={() => setTileFilter((t) => (t === 'active' ? null : 'active'))}
+          accent
+        />
+        <TileButton
+          label="On track"
+          value={onTrack}
+          sub="state OnTrack"
+          active={tileFilter === 'on-track'}
+          onClick={() => setTileFilter((t) => (t === 'on-track' ? null : 'on-track'))}
+          valueClass="kpi-success"
+        />
+        <TileButton
+          label="At risk"
+          value={atRisk}
+          sub="state AtRisk"
+          active={tileFilter === 'at-risk'}
+          onClick={() => setTileFilter((t) => (t === 'at-risk' ? null : 'at-risk'))}
+          valueClass="kpi-warning"
+        />
+        <TileButton
+          label="Blocked"
+          value={blocked}
+          sub="state Blocked"
+          active={tileFilter === 'blocked'}
+          onClick={() => setTileFilter((t) => (t === 'blocked' ? null : 'blocked'))}
+          valueClass="kpi-danger"
+        />
+        <TileButton
+          label="Go-Live ≤ 60d"
+          value={goingLiveSoon}
+          sub="Target Go-Live window"
+          active={tileFilter === 'go-live-60d'}
+          onClick={() => setTileFilter((t) => (t === 'go-live-60d' ? null : 'go-live-60d'))}
+        />
+      </div>
+
+      <div className="filter-row" style={{ marginBottom: 0 }}>
+        <div className="field-wrap" style={{ flex: 1 }}>
+          <label className="field-label">Search</label>
+          <input
+            type="text"
+            className="input"
+            placeholder="Search projects, people, cores, customers…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
         </div>
-        <div className="kpi">
-          <div className="kpi-label">On track</div>
-          <div className="kpi-value kpi-success">{onTrack}</div>
-          <div className="kpi-sub">state OnTrack</div>
-        </div>
-        <div className="kpi">
-          <div className="kpi-label">At risk</div>
-          <div className="kpi-value kpi-warning">{atRisk}</div>
-          <div className="kpi-sub">state AtRisk</div>
-        </div>
-        <div className="kpi">
-          <div className="kpi-label">Blocked</div>
-          <div className="kpi-value kpi-danger">{blocked}</div>
-          <div className="kpi-sub">state Blocked</div>
-        </div>
-        <div className="kpi">
-          <div className="kpi-label">Go-Live ≤ 60d</div>
-          <div className="kpi-value">{goingLiveSoon}</div>
-          <div className="kpi-sub">Target Go-Live window</div>
+        <div className="text-xs text-gray-600" style={{ alignSelf: 'flex-end', paddingBottom: 10 }}>
+          {projects.length} of {allProjects.length} match
         </div>
       </div>
 
@@ -507,6 +638,55 @@ function CreateProjectModal({
         </div>
       </form>
     </Modal>
+  );
+}
+
+/**
+ * Clickable KPI tile that toggles a single-selected filter on the projects list.
+ * Visually identical to the prior static tile when inactive; gets a `kpi-active`
+ * class when this tile is the active filter.
+ */
+function TileButton({
+  label,
+  value,
+  sub,
+  active,
+  onClick,
+  accent,
+  valueClass,
+}: {
+  label: string;
+  value: number;
+  sub: string;
+  active: boolean;
+  onClick: () => void;
+  accent?: boolean;
+  valueClass?: string;
+}) {
+  const className = [
+    'kpi',
+    accent ? 'accent' : '',
+    active ? 'kpi-active' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  return (
+    <button
+      type="button"
+      className={className}
+      onClick={onClick}
+      aria-pressed={active}
+      style={{
+        textAlign: 'left',
+        cursor: 'pointer',
+        font: 'inherit',
+        color: 'inherit',
+      }}
+    >
+      <div className="kpi-label">{label}</div>
+      <div className={`kpi-value ${valueClass ?? ''}`}>{value}</div>
+      <div className="kpi-sub">{sub}</div>
+    </button>
   );
 }
 

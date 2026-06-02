@@ -204,7 +204,15 @@ describe('SyncEngine', () => {
       expect(result.projectsPatched).toBe(0);
       expect(db.project.update).toHaveBeenCalledTimes(1);
       const updateArg = db.project.update.mock.calls[0]![0] as { data: Record<string, unknown> };
-      expect(updateArg.data).toEqual({ trackerRaw: rawPayload });
+      // trackerRaw refreshes even with an empty merge patch; the post-extraction
+      // person resolution also writes the three FK columns (all null here since
+      // the test fixture has no role strings in details).
+      expect(updateArg.data).toEqual({
+        trackerRaw: rawPayload,
+        projectManagerId: null,
+        solutionArchitectId: null,
+        solutionConsultantId: null,
+      });
     });
   });
 

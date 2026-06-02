@@ -123,11 +123,33 @@ The system SHALL provide a capacity view at `/capacity` defaulting to a 12-week 
 - **THEN** a side panel opens listing every person with their committed `pct` for that week, sorted descending, with over-allocated rows visually flagged
 
 ### Requirement: Navigation shell
-The system SHALL render a persistent navigation shell with links to `Projects`, `Capacity`, `Risks`, `Timeline`, and (for admins only) `Trackers`. The shell MUST show the signed-in user's name and a sign-out action.
+The system SHALL render a persistent navigation shell with the order **Dashboard → Timeline → Risks → Projects → Capacity → Trackers**. The shell MUST show the signed-in user's name and a sign-out action. The Trackers link MUST be visible only to admins.
+
+The header band (Torii logo + nav links) MUST be sticky to the top of the viewport so it remains visible while the main content scrolls. The signed-in user footer MUST be sticky to the bottom of the viewport so it remains visible regardless of page length. The main content scroll region sits between the two sticky bands. Both bands MUST have a solid background so scrolling content does not bleed through.
+
+#### Scenario: Nav order
+- **GIVEN** any authenticated user opens any page
+- **WHEN** the nav shell renders
+- **THEN** the visible links appear in the order Dashboard, Timeline, Risks, Projects, Capacity (and Trackers when the user is admin)
+
+#### Scenario: Dashboard is the default landing
+- **GIVEN** an authenticated user opens `/`
+- **WHEN** the route resolves
+- **THEN** the Portfolio Dashboard page renders (no redirect to `/projects`)
+
+#### Scenario: Header sticky on long pages
+- **GIVEN** a user on `/projects` with rows that overflow the viewport
+- **WHEN** the user scrolls the page
+- **THEN** the header band (logo + nav links) remains visible at the top of the viewport at every scroll position
+
+#### Scenario: User footer sticky on long pages
+- **GIVEN** the same scrolled page
+- **WHEN** the user scrolls toward the bottom
+- **THEN** the signed-in user band remains visible at the bottom of the viewport at every scroll position
 
 #### Scenario: Admin sees Trackers link
 - **GIVEN** an authenticated user with `PM` role and `is_admin=true`
-- **WHEN** any page in the app is rendered
+- **WHEN** any page is rendered
 - **THEN** the navigation includes a `Trackers` link
 
 #### Scenario: Non-admin does not see Trackers link
@@ -349,4 +371,315 @@ The Harvest panel is detailed in the `harvest-integration` capability; this requ
 - **GIVEN** a project that is linked to Harvest but has never been refreshed (no snapshot row)
 - **WHEN** a user opens the project detail page
 - **THEN** no budget chip is rendered (an "On budget" claim would be misleading with no data)
+
+### Requirement: Per-person view at `/people/:id`
+The system SHALL provide a per-person detail view at `/people/:id` accessible to any authenticated user. The view MUST display:
+
+- A header band with the person's name, email, role badge (`PM` or `Viewer`), and an admin badge when `isAdmin === true`.
+- Four sections, one per role: **Owner**, **Project Manager**, **Solution Architect**, **Senior Consultant**.
+- Each section lists every project where this person currently holds that role. The same project MAY appear in multiple sections when the person holds more than one role on it.
+- Each project row displays: project name (link to `/projects/:id`), current phase badge, current state badge, and the over-budget chip when `project.overBudget === true`.
+- Each section that has no projects MUST render an empty-state line ("No projects as Project Manager" etc.).
+
+Project membership is derived from `Project.ownerId`, `project_manager_id`, `solution_architect_id`, and `solution_consultant_id`. The view is read-only — no edit affordances in this change.
+
+#### Scenario: Person holds multiple roles
+- **GIVEN** a person who is PM on three projects, SA on two, and owner of one (with overlap)
+- **WHEN** they open `/people/:id`
+- **THEN** the page shows their projects in the appropriate sections; a project where they are both PM and Owner appears in both sections
+
+#### Scenario: Empty sections
+- **GIVEN** a person who is only a PM (no SA or SC roles, no owned projects)
+- **WHEN** they open `/people/:id`
+- **THEN** the PM section lists their projects; the Owner, SA, and SC sections each show "No projects as <role>."
+
+#### Scenario: Project state surfaces over-budget
+- **GIVEN** a person's project list includes a project with `overBudget === true`
+- **WHEN** the page renders
+- **THEN** that project's row carries the "Over budget" chip
+
+### Requirement: Timeline person filter is driven by Person FKs, not substring matching
+The Timeline view's person filter SHALL be a dropdown of Person rows (populated from `GET /api/people`). When a person is selected, the visibility filter MUST compare Person IDs against each project's `ownerId`, `project_manager_id`, `solution_architect_id`, and `solution_consultant_id` — not against substring matches on the legacy `details.*` strings.
+
+The "any role" / role-specific selector behavior from the prior change is preserved: when both person and role are set, the project must hold that specific FK; with person only, any of the four FKs must match; with role only, any project where that FK is non-null qualifies.
+
+#### Scenario: Person dropdown is populated from /api/people
+- **GIVEN** the system has 12 Person rows
+- **WHEN** the user opens the Timeline page
+- **THEN** the Person filter dropdown lists those 12 Person rows by name (plus "All people")
+
+#### Scenario: Filter matches by ID, not substring
+- **GIVEN** two Person rows named "Aaron Levy" and "Aaron Levenson" exist as separate FK targets
+- **WHEN** the user selects "Aaron Levy" in the dropdown
+- **THEN** only projects where `project_manager_id` (etc.) equals Aaron Levy's id are visible; projects whose FK points at Aaron Levenson do NOT appear
+
+#### Scenario: By-person view groups by Person, falling back to string
+- **GIVEN** a project with `project_manager_id` set (Person row) and `solution_consultant_id` null but `details.solution_consultant = "Sarah Unresolved"`
+- **WHEN** the user switches to By-person view
+- **THEN** the project appears in Aaron Levy's group (PM) and ALSO in a "Sarah Unresolved" string-fallback group (SC); the string-fallback group is visually identical to a Person group but has no link to a `/people/:id` page
+
+### Requirement: Project detail + projects list render Person.name with link when FK is set
+The three role rows on the project detail page and the three role columns on the projects list SHALL display the resolved Person's name as a link to `/people/:id` when the FK is set, falling back to the legacy `details.*` string (plain text, no link) when the FK is null.
+
+The Projects-page search input (from the prior change) MUST include the resolved Person names in its search haystack, so typing a person's name surfaces every project they hold any role on — independent of whether the legacy `details.*` string is stale.
+
+#### Scenario: Role row links to /people/:id
+- **GIVEN** a project whose `projectManager` Person is "Aaron Levy" with id `aaron-id`
+- **WHEN** the project detail page renders
+- **THEN** the PM row shows "Aaron Levy" rendered as `<a href="/people/aaron-id">`
+
+#### Scenario: Search finds projects by Person.name even when the legacy string is different
+- **GIVEN** a project whose `details.project_manager = "Aaron J. Levy"` but the resolved Person's name is "Aaron Levy"
+- **WHEN** the user types "aaron levy" on the Projects page search
+- **THEN** that project is included in the results
+
+### Requirement: Projects page free-text search
+The Projects page SHALL provide a search input that filters the project list client-side. The match MUST be a case-insensitive substring tested against a per-project haystack of: project name, current state, current phase display label, owner identifier, and every team-and-context detail field (`project_manager`, `solution_architect`, `solution_consultant`, `core_solution`, `core_vendor`, `customer_type`, `customer_status`, `finance_use_case`, `use_case_group`, `primary_contact`).
+
+The search composes with the existing filter dropdowns AND with the new tile filter via AND — projects must satisfy every active filter to render. The filtered count MUST update live as the user types.
+
+#### Scenario: Search filters by project name
+- **GIVEN** a project named "Acme integration"
+- **WHEN** the user types `acm` in the search input
+- **THEN** the project remains visible; unrelated projects are hidden
+
+#### Scenario: Search matches a person across roles
+- **GIVEN** a project whose `details.solution_consultant = "Dana Lee"`
+- **WHEN** the user types `dana` in the search
+- **THEN** that project is included
+
+#### Scenario: Search matches the core vendor
+- **GIVEN** a project whose `details.core_vendor = "Jack Henry"`
+- **WHEN** the user types `henry`
+- **THEN** that project is included
+
+#### Scenario: Search composes with the existing phase filter
+- **GIVEN** the user has selected `phase=UAT` in the existing dropdown and types `acm` in search
+- **WHEN** the list renders
+- **THEN** only UAT-phase projects matching "acm" appear
+
+### Requirement: Projects page KPI tiles act as filter links
+The KPI tiles at the top of the Projects page SHALL be interactive single-selected filters. Each tile is a button; clicking it sets the page's tile filter; clicking the currently active tile clears the filter. The tile filter composes with the search input and the dropdown filters via AND. The active tile MUST be visually distinguished (border accent or background tint).
+
+The tile filters MUST be:
+
+- **Active**: `state in (OnTrack, AtRisk, Blocked)` AND `phase != Backlog`.
+- **On track**: `state === OnTrack`.
+- **At Risk**: `state === AtRisk`.
+- **Blocked**: `state === Blocked`.
+- **Go-Live ≤ 60d**: `keyDates.target_go_live` is set AND falls within 60 days of today AND `state != Done`.
+- **Total**: clears the tile filter (the existing tile remains as a "clear" affordance).
+
+Filters cannot be combined across tiles — selecting one deselects the previously active tile.
+
+#### Scenario: Clicking At Risk narrows the list
+- **GIVEN** a mix of projects in OnTrack, AtRisk, Blocked, and Done states
+- **WHEN** the user clicks the "At Risk" tile
+- **THEN** only `state === AtRisk` projects render and the tile is visually active
+
+#### Scenario: Clicking the active tile clears it
+- **GIVEN** the "At Risk" tile is active
+- **WHEN** the user clicks "At Risk" again
+- **THEN** the filter clears and every project renders again
+
+#### Scenario: Go-Live ≤ 60d excludes Done projects
+- **GIVEN** a Done project whose `target_go_live` is 14 days ago and an active project whose `target_go_live` is 30 days from today
+- **WHEN** the user clicks "Go-Live ≤ 60d"
+- **THEN** the active project renders; the Done project does not
+
+#### Scenario: Active tile composes with search via AND
+- **GIVEN** the user has clicked the "Active" tile and typed "acme" in search
+- **WHEN** the list renders
+- **THEN** only projects matching both filters render (non-Backlog non-Done projects whose haystack contains "acme")
+
+### Requirement: Per-project Allocations vs. Actuals panel
+The project detail page SHALL render a `<ReconciliationPanel>` section card below the existing AllocationsPanel. The panel is visible to every authenticated user (read-only — no edit affordances).
+
+The panel MUST render a table with one row per Person allocated to this project (via the existing `allocations` table). Each row displays:
+
+- **Person name** (linked to `/people/:id` when the FK resolves; falls back to allocation's `personId` otherwise)
+- **Planned hours** — the sum of `plannedHoursForAllocation` across every allocation this Person has on this project
+- **Actual hours** — total from the project's Harvest snapshot breakdown, summing all `tasks[].people[]` entries where `people[i].personId === person.harvest_user_id`. Renders "no Harvest link" when the Person has no `harvest_user_id` set.
+- **Variance** — signed hours and signed percentage; null when actuals are null
+- **Status chip** — green/amber/red per `varianceBucket(planned, actual)`; neutral "no Harvest link" chip when actuals are null
+
+Below the main table, a collapsible `<details>` titled "Logged but not allocated" MUST list every Person from the Harvest snapshot breakdown whose `harvest_user_id` doesn't match any allocated Person on this project. This surfaces the inverse error case — work logged without a corresponding allocation. Each "Logged but not allocated" row shows the Person's name (linked when resolvable) and their actual hours.
+
+When the project has no allocations, the panel renders "No allocations on this project." When the project has no Harvest snapshot, the panel renders "No Harvest snapshot — refresh the project to populate actuals." When the project has allocations but no allocated Person is linked to a Harvest user, the panel renders the planned-hours column with "no Harvest link" chips and a one-line CTA "Link Torii People to Harvest users at /trackers".
+
+#### Scenario: All allocated people are linked
+- **GIVEN** a project with 3 allocations whose People all have `harvest_user_id` set, and a Harvest snapshot
+- **WHEN** the page renders
+- **THEN** the panel shows 3 rows with planned and actual hours; variance chips reflect the buckets
+
+#### Scenario: One person unlinked
+- **GIVEN** the same project but one allocated Person has no `harvest_user_id`
+- **WHEN** the page renders
+- **THEN** that person's row shows the planned hours and a "no Harvest link" neutral chip in place of actuals; the other two rows render normally
+
+#### Scenario: Logged-but-not-allocated surfaces invisible work
+- **GIVEN** the Harvest snapshot includes a developer's hours, and that developer has a linked Torii Person, but is NOT in the project's `allocations`
+- **WHEN** the page renders
+- **THEN** the developer appears in the "Logged but not allocated" disclosure with their actual hours
+
+#### Scenario: No allocations
+- **GIVEN** a project with zero `allocations` rows
+- **WHEN** the page renders
+- **THEN** the panel renders "No allocations on this project."
+
+#### Scenario: No Harvest snapshot
+- **GIVEN** a project with allocations but no `project_harvest_snapshots` row (not yet refreshed, or no Harvest link)
+- **WHEN** the page renders
+- **THEN** the panel renders "No Harvest snapshot — refresh the project to populate actuals." with a link affordance to the HarvestPanel's refresh button
+
+### Requirement: Per-person Allocations vs. Actuals section on /people/:id
+The `/people/:id` view SHALL render an "Allocations vs. Actuals" section below the existing role sections. The section is hidden entirely when the Person has no allocations AND no `harvest_user_id` (nothing to show).
+
+The section MUST fetch `GET /api/people/:id/reconciliation` and render a table: Project name (link) | Planned | Actual | Variance | Status chip. Same color-coded variance chip rules as the per-project panel. The "no Harvest link" state renders when the Person's `harvest_user_id` is null; the table still shows planned hours per project, just without actuals or variance.
+
+#### Scenario: Linked person with allocations on 3 projects
+- **GIVEN** a Person linked to a Harvest user, with allocations on 3 projects
+- **WHEN** they open `/people/:id`
+- **THEN** the Allocations vs. Actuals section shows 3 rows with planned + actual + variance
+
+#### Scenario: Unlinked person
+- **GIVEN** a Person with allocations on projects but no `harvest_user_id`
+- **WHEN** the page renders
+- **THEN** every row shows planned hours; the Actual / Variance columns show null; the status chip is "no Harvest link" neutral
+
+#### Scenario: Person with no allocations and no Harvest link
+- **GIVEN** a Person with neither allocations nor a Harvest user link
+- **WHEN** the page renders
+- **THEN** the Allocations vs. Actuals section is hidden entirely (not rendered at all, no empty card)
+
+### Requirement: Portfolio Dashboard page at `/`
+The system SHALL provide a Portfolio Dashboard at the root path `/` accessible to every authenticated user. The page is read-only — no edit affordances. Every numeric value on the page that represents a project or person count MUST be a clickable link that navigates to the drill-down view containing those projects/people.
+
+The page MUST contain the following sections in order:
+
+1. **Hero KPI band** — 6 clickable tiles, in this order:
+   - **Active**: count of projects whose `state` is not `Done`. Click → `/projects`.
+   - **At risk**: count of distinct projects whose most-recent `ProjectRiskUpdate` has `ragLevel != Green` AND `state != Done`. Click → `/risks`.
+   - **Over budget**: count of projects where `overBudget === true`. Click → `/projects`.
+   - **Launching ≤ 30d**: count of projects with `keyDates.target_go_live` set, within 30 days of today, and `state != Done`. Click → `/projects`.
+   - **Avg slip**: average `(actual_go_live − baseline_go_live)` in days across Done projects with both dates set. Click → `/projects`.
+   - **People involved**: count of distinct Person rows appearing as PM/SA/SC on any non-Done project. Non-interactive (no link until a `/people` index page exists).
+
+2. **This week's risk picture** — Red / Amber / Green chips with the count of distinct projects whose most-recent weekly RAG is at that level. Each chip MUST show the previous-week's count as muted subtext. Red and Amber chips MUST link to `/risks`; the Green chip MUST NOT be clickable.
+
+3. **Schedule pressure** — a list of every project with `keyDates.target_go_live` set within 30 days of today AND `state != Done`. Sorted ascending by date. Each row MUST show: project name (link to `/projects/:id`), the date, days-until-target, phase badge, RAG chip (when an at-risk update exists), and over-budget chip (when `overBudget`). Empty state when nothing is launching in the window.
+
+4. **Needs attention** — two side-by-side cards:
+   - **No risk update this week**: active projects (`state != Done`) with no `ProjectRiskUpdate` row for the current ISO week. Each row: project name (link), latest RAG (any week, or "no prior update"), weeks-since-last-update. Sort: worst latest RAG first, then weeks-since-last-update descending.
+   - **Slipping**: projects where `target_go_live > baseline_go_live` AND `state != Done`. Each row: project name (link), baseline date, current target date, slip days (in red). Sorted by slip-days descending. Limited to 30 rows.
+
+5. **Phase distribution** — a horizontal stacked bar with one segment per `Phase` value, segment widths proportional to the count of active projects in that phase. Uses the seven-phase color palette established by the Timeline page. Hovering a segment MUST show a tooltip with the phase label and the count.
+
+#### Scenario: Default landing is the dashboard
+- **GIVEN** an authenticated user opens `/`
+- **WHEN** the page resolves
+- **THEN** the Portfolio Dashboard renders (it is no longer a redirect to `/projects`)
+
+#### Scenario: Hero KPI tile links to its drill-down
+- **GIVEN** the user is on the dashboard
+- **WHEN** they click the "At risk" tile
+- **THEN** the browser navigates to `/risks`
+
+#### Scenario: Green RAG chip is not clickable
+- **GIVEN** the dashboard is rendered
+- **WHEN** the user clicks the Green-week chip
+- **THEN** no navigation occurs (the chip has no link target)
+
+#### Scenario: Schedule pressure surfaces launching projects in order
+- **GIVEN** three projects with `target_go_live` of `today+5d`, `today+15d`, and `today+25d` (all non-Done)
+- **WHEN** the dashboard renders
+- **THEN** the schedule-pressure list shows all three rows ordered ascending by date
+
+#### Scenario: Schedule pressure excludes far-future projects
+- **GIVEN** a project with `target_go_live` 60 days from today
+- **WHEN** the dashboard renders
+- **THEN** that project is NOT in the schedule-pressure list
+
+#### Scenario: No-risk-update list surfaces active projects without a current-week update
+- **GIVEN** project A has a `ProjectRiskUpdate` for the current ISO week; project B does not (and is not Done)
+- **WHEN** the dashboard renders
+- **THEN** project B appears in the "No risk update this week" card; project A does not
+
+#### Scenario: Slipping list shows positive slip only
+- **GIVEN** project A with `baseline_go_live = 2026-08-01` and `target_go_live = 2026-09-15` (slipped); project B with `target_go_live = 2026-07-15` (pulled in)
+- **WHEN** the dashboard renders
+- **THEN** project A appears in the slipping list; project B does not
+
+#### Scenario: Avg-slip KPI uses Done projects only
+- **GIVEN** several Done projects with both `baseline_go_live` and `actual_go_live` set, and other in-flight projects with `baseline_go_live` and `target_go_live` set
+- **WHEN** the dashboard's "Avg slip" KPI is computed
+- **THEN** only the Done projects contribute; in-flight projects are excluded (they're reflected in the "Slipping" list instead)
+
+#### Scenario: Phase distribution renders all seven segments
+- **GIVEN** active projects span every phase except `Production`
+- **WHEN** the phase-distribution bar renders
+- **THEN** six segments render with widths proportional to their counts; the `Production` segment is zero-width (or hidden) and does not break the bar
+
+### Requirement: `GET /api/dashboard/summary` aggregation endpoint
+The system SHALL expose `GET /api/dashboard/summary` returning the data required by the Portfolio Dashboard in a single response. Accessible to any authenticated user. The response shape MUST be:
+
+```ts
+{
+  kpis: {
+    active: number;
+    atRisk: number;
+    overBudget: number;
+    launchingSoon: number;
+    avgSlipDays: number | null;  // null when no Done projects have both dates set
+    peopleInvolved: number;
+  };
+  thisWeekRag: {
+    red: number; amber: number; green: number;
+    prevRed: number; prevAmber: number; prevGreen: number;
+  };
+  schedulePressure: Array<{
+    projectId: string;
+    projectName: string;
+    targetGoLive: string;       // ISO yyyy-mm-dd
+    daysUntil: number;
+    phase: Phase;
+    ragLevel: RagLevel | null;  // most-recent non-Green latest week, or null
+    overBudget: boolean;
+  }>;
+  noRiskUpdate: Array<{
+    projectId: string;
+    projectName: string;
+    latestRagLevel: RagLevel | null;
+    weeksSinceLastUpdate: number | null;
+  }>;
+  slipping: Array<{
+    projectId: string;
+    projectName: string;
+    baselineGoLive: string;     // ISO yyyy-mm-dd
+    targetGoLive: string;       // ISO yyyy-mm-dd
+    slipDays: number;           // positive integer
+  }>;
+  phaseCounts: Record<Phase, number>;
+}
+```
+
+The endpoint MUST NOT require any query parameters. All sub-queries MUST scope appropriately: `active` means `state != Done` everywhere; risk counts use the same `DISTINCT ON (project_id) ORDER BY week_of DESC` shape `/api/risks` uses.
+
+#### Scenario: Endpoint returns the full summary in one call
+- **WHEN** an authenticated user reads `GET /api/dashboard/summary`
+- **THEN** the response is a single JSON object containing every top-level key above; no key is missing
+
+#### Scenario: `avgSlipDays` is null when no Done project has both dates
+- **GIVEN** zero Done projects have both `baseline_go_live` AND `actual_go_live` set
+- **WHEN** the endpoint is called
+- **THEN** `kpis.avgSlipDays` is `null`
+
+#### Scenario: `phaseCounts` includes zero buckets
+- **GIVEN** no active projects are in `Production` phase
+- **WHEN** the endpoint is called
+- **THEN** `phaseCounts.Production` is `0` (the key is present, the value is zero)
+
+#### Scenario: Unauthenticated request is rejected
+- **WHEN** an unauthenticated client reads the endpoint
+- **THEN** the response is 401
 
