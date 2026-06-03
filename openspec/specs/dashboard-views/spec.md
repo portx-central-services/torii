@@ -123,24 +123,34 @@ The system SHALL provide a capacity view at `/capacity` defaulting to a 12-week 
 - **THEN** a side panel opens listing every person with their committed `pct` for that week, sorted descending, with over-allocated rows visually flagged
 
 ### Requirement: Navigation shell
-The system SHALL render a persistent navigation shell with the order **Dashboard → Timeline → Risks → Projects → Capacity → Trackers**. The shell MUST show the signed-in user's name and a sign-out action. The Trackers link MUST be visible only to admins.
+The system SHALL render a persistent navigation shell with the order **Dashboard → Timeline → Risks → Customers → Projects → People → Capacity → Trackers**. The shell MUST show the signed-in user's name and a sign-out action. The Trackers link MUST be visible only to admins.
 
 The header band (Torii logo + nav links) MUST be sticky to the top of the viewport so it remains visible while the main content scrolls. The signed-in user footer MUST be sticky to the bottom of the viewport so it remains visible regardless of page length. The main content scroll region sits between the two sticky bands. Both bands MUST have a solid background so scrolling content does not bleed through.
 
 #### Scenario: Nav order
 - **GIVEN** any authenticated user opens any page
 - **WHEN** the nav shell renders
-- **THEN** the visible links appear in the order Dashboard, Timeline, Risks, Projects, Capacity (and Trackers when the user is admin)
+- **THEN** the visible links appear in the order Dashboard, Timeline, Risks, Customers, Projects, People, Capacity (and Trackers when the user is admin)
+
+#### Scenario: People is visible to non-admin users
+- **GIVEN** an authenticated user with role `Viewer` (`is_admin = false`)
+- **WHEN** any page is rendered
+- **THEN** the nav includes the `People` link
 
 #### Scenario: Dashboard is the default landing
 - **GIVEN** an authenticated user opens `/`
 - **WHEN** the route resolves
-- **THEN** the Portfolio Dashboard page renders (no redirect to `/projects`)
+- **THEN** the Portfolio Dashboard page renders
+
+#### Scenario: Customers is visible to non-admin users
+- **GIVEN** an authenticated user with role `Viewer` (`is_admin = false`)
+- **WHEN** any page is rendered
+- **THEN** the nav includes the `Customers` link
 
 #### Scenario: Header sticky on long pages
 - **GIVEN** a user on `/projects` with rows that overflow the viewport
 - **WHEN** the user scrolls the page
-- **THEN** the header band (logo + nav links) remains visible at the top of the viewport at every scroll position
+- **THEN** the header band remains visible at the top of the viewport at every scroll position
 
 #### Scenario: User footer sticky on long pages
 - **GIVEN** the same scrolled page
@@ -148,7 +158,7 @@ The header band (Torii logo + nav links) MUST be sticky to the top of the viewpo
 - **THEN** the signed-in user band remains visible at the bottom of the viewport at every scroll position
 
 #### Scenario: Admin sees Trackers link
-- **GIVEN** an authenticated user with `PM` role and `is_admin=true`
+- **GIVEN** an authenticated user with `is_admin=true`
 - **WHEN** any page is rendered
 - **THEN** the navigation includes a `Trackers` link
 
@@ -376,19 +386,36 @@ The Harvest panel is detailed in the `harvest-integration` capability; this requ
 The system SHALL provide a per-person detail view at `/people/:id` accessible to any authenticated user. The view MUST display:
 
 - A header band with the person's name, email, role badge (`PM` or `Viewer`), and an admin badge when `isAdmin === true`.
-- Four sections, one per role: **Owner**, **Project Manager**, **Solution Architect**, **Senior Consultant**.
-- Each section lists every project where this person currently holds that role. The same project MAY appear in multiple sections when the person holds more than one role on it.
-- Each project row displays: project name (link to `/projects/:id`), current phase badge, current state badge, and the over-budget chip when `project.overBudget === true`.
-- Each section that has no projects MUST render an empty-state line ("No projects as Project Manager" etc.).
+- A **Workload** section (described below) showing the person's currently-active projects, their self-reported weekly capacity per project, their availability for new commitments, and the existing per-person reconciliation data joined in.
+- Four role sections — **Owner**, **Project Manager**, **Solution Architect**, **Senior Consultant** — each listing every project where this person currently holds that role. The same project MAY appear in multiple sections when the person holds more than one role on it.
+- Each role-section project row displays: project name (link to `/projects/:id`), current phase badge, current state badge, and the over-budget chip when `project.overBudget === true`.
+- Each role section that has no projects MUST render an empty-state line ("No projects as Project Manager" etc.).
 
-Project membership is derived from `Project.ownerId`, `project_manager_id`, `solution_architect_id`, and `solution_consultant_id`. The view is read-only — no edit affordances in this change.
+Project membership for the role sections is derived from `Project.ownerId`, `project_manager_id`, `solution_architect_id`, and `solution_consultant_id`. The role sections are read-only.
+
+**Workload section (new):**
+
+The Workload section sits between the header band and the role sections. It reads from `GET /api/people/:id/workload` and renders:
+
+1. **Availability row** — labeled "Availability for more work", showing the person's `availabilityPct`. When the viewer matches the editable condition (see below), the value is an inline numeric input (0–100, step 5); otherwise it's a static `N%` display.
+2. **Project workload table** — one row per project in the union of (active allocation) ∪ (non-zero self-reported capacity). Columns:
+   - Project name (link to `/projects/:id`) + phase badge.
+   - **Current weekly capacity** — the self-reported `weeklyPct`. Inline numeric editor (0–100) when editable; static display otherwise.
+   - **Planned: N%** — `allocatedPct` from active allocations, muted gray. Read-only at all times (it's PM-owned).
+   - **Lifetime hours** — from the reconciliation join. Displayed as `—` when the person is not Harvest-linked.
+   - **Variance chip** — green/amber/red/neutral, computed from planned vs. lifetime hours (reusing the existing `varianceBucket` helper).
+   - **Remove** button (editable only) — removes the row by PATCHing `weeklyPct: 0` for that project.
+3. **Add project** affordance (editable only) — a dropdown of non-Done projects not already in the table. Selecting one creates a capacity row at `weeklyPct: 5` so the row appears immediately for further editing.
+4. **Advisory sum line** (always shown) — `Σ reported: X% · availability: Y% · unaccounted: Z%`, where `Z = max(0, defaultCapacityPct - X - Y)`. When `X + Y > defaultCapacityPct`, the line goes amber and reads `over-committed by N%` instead of `unaccounted`. The advisory is purely visual; no mutation is blocked.
+
+**Editable condition:** the section's inline editors, Remove buttons, and Add-project dropdown render ONLY when `viewer.id === person.id` OR `viewer.isAdmin === true`. Other authenticated viewers see the same data read-only.
 
 #### Scenario: Person holds multiple roles
 - **GIVEN** a person who is PM on three projects, SA on two, and owner of one (with overlap)
 - **WHEN** they open `/people/:id`
-- **THEN** the page shows their projects in the appropriate sections; a project where they are both PM and Owner appears in both sections
+- **THEN** the page shows their projects in the appropriate role sections; a project where they are both PM and Owner appears in both
 
-#### Scenario: Empty sections
+#### Scenario: Empty role sections
 - **GIVEN** a person who is only a PM (no SA or SC roles, no owned projects)
 - **WHEN** they open `/people/:id`
 - **THEN** the PM section lists their projects; the Owner, SA, and SC sections each show "No projects as <role>."
@@ -397,6 +424,36 @@ Project membership is derived from `Project.ownerId`, `project_manager_id`, `sol
 - **GIVEN** a person's project list includes a project with `overBudget === true`
 - **WHEN** the page renders
 - **THEN** that project's row carries the "Over budget" chip
+
+#### Scenario: Self viewing own page sees editable Workload
+- **GIVEN** authenticated user Aaron viewing `/people/Aaron`
+- **WHEN** the page renders
+- **THEN** the Workload section's availability and per-project capacity values are inline editors and an Add-project affordance is visible
+
+#### Scenario: Non-admin viewing another user sees read-only Workload
+- **GIVEN** authenticated user Drew (non-admin) viewing `/people/Aaron`
+- **WHEN** the page renders
+- **THEN** the Workload section shows the same values but with no input controls, no Remove buttons, and no Add-project affordance
+
+#### Scenario: Admin viewing another user sees editable Workload
+- **GIVEN** authenticated admin Drew viewing `/people/Aaron`
+- **WHEN** the page renders
+- **THEN** the Workload section renders with full edit affordances (same as self)
+
+#### Scenario: Advisory line flips to amber on over-commit
+- **GIVEN** a person with `defaultCapacityPct = 100`, `availabilityPct = 20`, and capacity rows summing to 90%
+- **WHEN** the Workload section renders
+- **THEN** the advisory line reads `over-committed by 10%` in amber
+
+#### Scenario: Project in workload by self-report only (no active allocation)
+- **GIVEN** a person with a capacity row of `weeklyPct = 30` on project P AND no active allocation on P
+- **WHEN** the page renders
+- **THEN** the row for P shows `Current: 30%`, `Planned: —`, and the variance chip is `neutral` (no planned baseline to compare against)
+
+#### Scenario: Project in workload by active allocation only (no self-report)
+- **GIVEN** a person with an active 50% allocation on project P AND no capacity row on P
+- **WHEN** the page renders
+- **THEN** the row for P shows `Current: 0%`, `Planned: 50%`, and the variance chip reflects 50% vs. lifetime hours
 
 ### Requirement: Timeline person filter is driven by Person FKs, not substring matching
 The Timeline view's person filter SHALL be a dropdown of Person rows (populated from `GET /api/people`). When a person is selected, the visibility filter MUST compare Person IDs against each project's `ownerId`, `project_manager_id`, `solution_architect_id`, and `solution_consultant_id` — not against substring matches on the legacy `details.*` strings.
@@ -682,4 +739,100 @@ The endpoint MUST NOT require any query parameters. All sub-queries MUST scope a
 #### Scenario: Unauthenticated request is rejected
 - **WHEN** an unauthenticated client reads the endpoint
 - **THEN** the response is 401
+
+### Requirement: Customers index at `/customers`
+The system SHALL provide a customers index at `/customers` accessible to every authenticated user. The page renders a sortable table with one row per `Customer`. Columns: name (link to `/customers/:id`), # Monday projects (`COUNT(projects WHERE customer_id = c.id)`), # Harvest projects (`COUNT(harvest_projects WHERE customer_id = c.id)`), lifetime hours (`SUM(harvest_projects.spent_billable + spent_nonbillable) WHERE customer_id = c.id`), and a "Linked to Harvest" badge (true when `harvest_client_id IS NOT NULL`).
+
+The table MUST support client-side sorting on every column. The default sort is by name ascending. Empty values (e.g., zero Harvest projects) sort last when sorting by that column.
+
+#### Scenario: Customer with no Harvest linkage renders
+- **GIVEN** a Customer with `harvest_client_id = NULL` and two Monday projects
+- **WHEN** an authenticated user opens `/customers`
+- **THEN** the row shows # Monday projects = 2, # Harvest projects = 0, lifetime hours = 0, and the "Linked to Harvest" badge is absent
+
+#### Scenario: Sort by lifetime hours
+- **GIVEN** three customers with lifetime hours 100, 0, 500
+- **WHEN** the user clicks "Lifetime hours" header to sort descending
+- **THEN** rows appear in order 500, 100, 0
+
+### Requirement: Customer detail at `/customers/:id`
+The system SHALL provide a customer detail page at `/customers/:id` accessible to every authenticated user. The page MUST contain the following sections in order:
+
+1. **Header card** — Customer name (large), "Linked to Harvest" badge with the Harvest client name when set, "Edit name" button (PM or admin only).
+2. **Monday projects** — Table of every project with `customer_id = :id`. Columns: name (link to `/projects/:id`), phase badge, state badge, target go-live, RAG chip when an at-risk update exists. Empty state: "No Monday projects under this customer yet."
+3. **Harvest projects** — Table of every `harvest_projects` row with `customer_id = :id`. Columns: name (link to `harvest_project_url`), is-billable badge, "Pinned to" (link to the Torii project when set, "—" when customer-only), budget hours, spent hours, percent-of-budget chip, last-fetched. Empty state: "No Harvest projects under this customer yet."
+4. **Customer-wide reconciliation** — Card showing the response of `GET /api/customers/:id/reconciliation`. Top row: planned hours, actual hours, support hours, variance chip (signed % using the existing green/amber/red bucket helper). Below: a small table of `perProject` rows (project name → planned, actual, variance chip).
+
+#### Scenario: Customer with mixed delivery and support
+- **GIVEN** customer C with two Monday projects and three Harvest projects (two pinned, one support)
+- **WHEN** any authenticated user opens `/customers/C`
+- **THEN** the Monday projects section lists two rows, the Harvest projects section lists three rows (the support row shows "—" in the Pinned-to column), and the reconciliation card shows non-zero `supportHours`
+
+#### Scenario: Edit name is gated to PM / admin
+- **GIVEN** customer C and a Viewer user
+- **WHEN** the Viewer opens `/customers/C`
+- **THEN** the "Edit name" button is not rendered
+
+#### Scenario: Empty state
+- **GIVEN** a customer with no Monday projects yet
+- **WHEN** the page renders
+- **THEN** the Monday projects section shows the empty-state message and the reconciliation card shows planned hours = 0 with variance "—"
+
+### Requirement: Project detail surfaces the customer link
+The system SHALL render the customer name as a clickable link on `/projects/:id` when `customerId` is set. The link MUST appear in the header facets band alongside the existing Team and Links facets. When `customerId` is NULL, the facet renders the em-dash "—" with no link target.
+
+#### Scenario: Project with customer linked
+- **GIVEN** a project with `customerId` set to customer C ("Acme Corp")
+- **WHEN** the project detail page renders
+- **THEN** the header facets band shows "Customer: Acme Corp" as a link to `/customers/C`
+
+#### Scenario: Project without customer linked
+- **GIVEN** a project with `customerId = NULL`
+- **WHEN** the page renders
+- **THEN** the facets band shows "Customer: —" with no link
+
+### Requirement: People index at `/people`
+The system SHALL provide a People index at `/people` accessible to every authenticated user. The page renders a sortable table with one row per `Person`. Columns, in order:
+
+1. **Name** — link to `/people/:id`.
+2. **Role** — `PM` or `Viewer` chip, with an `Admin` star when `isAdmin === true`. Includes a muted `Harvest` badge when `harvestUserId === null` to flag people who aren't linked to Harvest yet.
+3. **Capacity** — `<committedPct>% committed of <defaultCapacityPct>%`. When `committedPct + availabilityPct > defaultCapacityPct`, an amber "Over by N%" chip renders alongside the cell.
+4. **Available** — the person's `availabilityPct` rendered as `N%`.
+5. **30d billed** — `billedHoursLast30d` rendered as `N.Nh`, or an em-dash when null. The cell carries a tooltip "Updated <relative-time>" reading from `billedHoursAsOf`.
+6. **Active projects** — the count of `currentProjects[]` followed by an expand chevron (▶). Clicking the chevron toggles a sub-table below the row showing each `currentProjects[]` entry (project name link, phase badge, `Current: N%`, `Planned: N%` muted when zero, lifetime hours, variance chip). Default state: collapsed.
+7. **Last reported** — relative time from `lastReportedAt`, or an em-dash when null.
+
+The page MUST support client-side sorting on every column. Default sort is `name` ascending. The expanded state is local to the page session (not persisted across navigation).
+
+The page is read-only; all edits live on `/people/:id`.
+
+#### Scenario: Index lists every Person
+- **GIVEN** the database contains N Person rows
+- **WHEN** an authenticated user opens `/people`
+- **THEN** the table renders N rows (modulo loading state)
+
+#### Scenario: Over-committed person displays amber chip
+- **GIVEN** Person Aaron with `defaultCapacityPct = 100`, `availabilityPct = 20`, `committedPct = 90` (over by 10)
+- **WHEN** the index renders
+- **THEN** Aaron's Capacity cell shows the "Over by 10%" amber chip
+
+#### Scenario: Harvest-unlinked person flagged
+- **GIVEN** Person Aaron with `harvestUserId = null`
+- **WHEN** the index renders
+- **THEN** Aaron's row shows the muted `Harvest` badge in the Role cell, and his 30d billed cell shows `—`
+
+#### Scenario: Row expander reveals current projects
+- **GIVEN** Person Aaron with two current projects (one allocation-only, one with both)
+- **WHEN** the user clicks the chevron in Aaron's Active projects cell
+- **THEN** a sub-table renders below Aaron's row with both project rows; clicking again collapses it
+
+#### Scenario: Sort by 30d billed descending
+- **GIVEN** three people with 30d billed values 100, 40, 0
+- **WHEN** the user clicks the 30d billed header twice (asc, then desc)
+- **THEN** the rows reorder 100, 40, 0; people with null values sort last in both directions
+
+#### Scenario: Index page navigates to detail
+- **GIVEN** the index is rendered
+- **WHEN** the user clicks a name link
+- **THEN** the browser navigates to `/people/:id` for that person
 

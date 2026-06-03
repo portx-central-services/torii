@@ -4,29 +4,20 @@
 TBD - created by archiving change add-integration-dashboard. Update Purpose after archive.
 ## Requirements
 ### Requirement: Project entity
-The system SHALL persist a Project entity with the fields: `id`, `name`, `phase`, `state`, `key_dates` (kickoff, target_go_live, actual_go_live, hypercare_end), `details`, `owner_id`, `tracker_ref` (nullable), `created_at`, `updated_at`. Phase MUST be one of `Backlog`, `Initiation`, `Design`, `Development`, `UAT`, `GoLiveReadiness`, `Production`. State MUST be one of `OnTrack`, `AtRisk`, `Blocked`, `Done`. The `details` field MUST be a JSON object of optional string members drawn from the fixed set: `project_manager`, `solution_architect`, `solution_consultant`, `core_solution`, `core_vendor`, `primary_contact`, `status_report_url`, `jira_project_url`, `customer_type`, `finance_use_case`, `use_case_group`, `customer_status`. Unknown `details` keys MUST be rejected. `status_report_url` and `jira_project_url`, when present and non-empty, MUST be syntactically valid URLs.
+The system SHALL persist a `Project` row per delivery engagement, with: `id` (cuid), `name`, `phase` (enum), `state` (enum), `keyDates` (JSON), `ownerId` (Person FK, nullable), `trackerRef` (JSON {provider, externalId} or null), `trackerRaw` (JSON or null), `details` (JSON), `fieldMapping` (JSON), `customerId` (Customer FK, nullable), `projectManagerId` / `solutionArchitectId` / `solutionConsultantId` (Person FKs, nullable), `createdAt`, `updatedAt`. The project is the canonical Torii unit of delivery work; cross-system identity to Harvest billing is mediated by the customer entity and the per-Harvest-project link, NOT by a field on the project itself.
 
-#### Scenario: Create a Torii-native project
-- **GIVEN** an authenticated user with the `PM` role
-- **WHEN** they submit `POST /api/projects` with a name, initial phase `Initiation`, and state `OnTrack`
-- **THEN** the system persists the project, assigns an id, sets `owner_id` to the caller, and returns `201` with the new project
+#### Scenario: Customer assignment is optional
+- **GIVEN** a project created via Monday sync before any customer has been linked to that customer's Harvest client
+- **WHEN** the project is persisted
+- **THEN** `customer_id` is NULL and the project remains fully usable (rendered on `/projects`, editable, allocations + risks all work)
 
-#### Scenario: Reject invalid phase
-- **WHEN** a request is submitted with `phase` set to a value not in the allowed set
-- **THEN** the system returns `400` with a validation error and does NOT persist the project
+#### Scenario: Project read response includes resolved customer
+- **WHEN** a client fetches `GET /api/projects/:id`
+- **THEN** the response includes `customerId` (the FK value) and `customer` (a resolved `{ id, name }` row, or null)
 
-#### Scenario: Persist and return details fields
-- **GIVEN** an authenticated PM
-- **WHEN** they submit `PATCH /api/projects/{id}` with `details: { project_manager: "Dana Lee", customer_status: "Active" }`
-- **THEN** the system persists those members and subsequent reads of the project return them under `details`
-
-#### Scenario: Reject unknown details key
-- **WHEN** a request includes `details` with a key not in the fixed set (e.g., `details.foo`)
-- **THEN** the system returns `400` with a validation error and does NOT persist the project
-
-#### Scenario: Reject malformed link field
-- **WHEN** a request sets `details.jira_project_url` to a non-URL string
-- **THEN** the system returns `400` with a validation error
+#### Scenario: Project does not expose a Harvest project id directly
+- **WHEN** any client fetches `GET /api/projects` or `GET /api/projects/:id`
+- **THEN** the response shape does NOT include a `harvestProjectId` field; the link from project to Harvest project lives on the `harvest_projects` side as a `project_id` FK
 
 ### Requirement: Phase transitions
 The system SHALL allow a project's phase to advance to any other phase value. The system MUST record an audit entry capturing `from_phase`, `to_phase`, `actor_id`, and `at` timestamp for every transition.
@@ -134,18 +125,22 @@ The `Phase` enum SHALL be the ordered set `Backlog`, `Initiation`, `Design`, `De
 - **THEN** the displayed text is `Go-Live Readiness`; all other phase enum values display as their identifier verbatim
 
 ### Requirement: Derived `overBudget` on the project read API
-The project read shape returned by `GET /api/projects` and `GET /api/projects/:id` SHALL include a required boolean field `overBudget` derived from the cached Harvest snapshot. The full derivation is owned by the `harvest-integration` capability; this requirement only pins that the value is exposed on the project read shape and is read-only.
+The system SHALL expose a boolean `overBudget` on every project read response, computed at read time as `(sum of spent_hours_billable + spent_hours_nonbillable across HarvestProject rows pinned to this project) > (sum of budget_hours across the same rows)`. The flag MUST be false when no Harvest project is pinned to this Torii project, when every pinned Harvest project has a null `budget_hours`, or when the total budget is zero. `overBudget` MUST NOT be persisted as a column on `projects`.
 
-The field MUST NOT be persisted as a column on `projects` and MUST NOT be writable on `POST /api/projects` or `PATCH /api/projects/:id`. Any client-supplied `overBudget` MUST be ignored or rejected.
+#### Scenario: Sums across multiple pinned Harvest projects
+- **GIVEN** a Torii project with two pinned Harvest projects: A (budget 100h, spent 60h) and B (budget 80h, spent 30h)
+- **WHEN** the project is read
+- **THEN** `overBudget` is false (total spent 90h ≤ total budget 180h)
 
-#### Scenario: Read shape always carries the field
-- **GIVEN** any project (linked, unlinked, with snapshot, without)
-- **WHEN** a client reads the project
-- **THEN** the response object contains an `overBudget` boolean — never undefined, never missing
+#### Scenario: One pinned Harvest project pushes the sum over budget
+- **GIVEN** a Torii project with two pinned Harvest projects: A (budget 100h, spent 110h) and B (budget 80h, spent 50h)
+- **WHEN** the project is read
+- **THEN** `overBudget` is true (total spent 160h > total budget 180h is false — adjust example: A budget 100h spent 120h, B budget 0h spent 0h → total spent 120h, total budget 100h → true)
 
-#### Scenario: Write requests cannot set overBudget
-- **WHEN** a client submits `POST /api/projects` or `PATCH /api/projects/:id` with `overBudget: true` in the body
-- **THEN** the API ignores the field (returns success with the derived value) or rejects with 400; the Harvest snapshot is the only source of the value
+#### Scenario: No pinned Harvest projects
+- **GIVEN** a Torii project with `customerId` set but no `harvest_projects` rows pinned (`project_id IS NULL` for all of the customer's Harvest projects)
+- **WHEN** the project is read
+- **THEN** `overBudget` is false
 
 ### Requirement: Project read shape exposes resolved Person rows for the three role fields
 The project read shape returned by `GET /api/projects` and `GET /api/projects/:id` SHALL include three additional fields populated from the project's `project_manager_id`, `solution_architect_id`, and `solution_consultant_id` FKs:
