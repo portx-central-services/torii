@@ -1,6 +1,38 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 
 /**
+ * Placeholder strings that Monday users sometimes put in a role column to mean
+ * "nobody yet" rather than naming an individual. We deliberately do NOT create
+ * Person rows for these. Compare case-insensitively against trimmed input.
+ */
+export const PLACEHOLDER_ROLE_NAMES: ReadonlySet<string> = new Set([
+  'not staffed',
+  'tbd',
+  'tba',
+  'unassigned',
+  'n/a',
+  'na',
+  'none',
+]);
+
+/**
+ * Split a Monday role-column value into individual person names. Handles the
+ * common multi-person pattern ("Alex Costa, Greg Newton") that previously got
+ * mis-extracted as a single Person row. Placeholders like "Not Staffed" are
+ * filtered out so they never produce a Person row.
+ *
+ * Returns the cleaned parts in original order. Empty inputs return `[]`.
+ */
+export function splitRoleNames(raw: string | undefined | null): string[] {
+  const s = raw?.trim();
+  if (!s) return [];
+  return s
+    .split(/,\s*/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0 && !PLACEHOLDER_ROLE_NAMES.has(p.toLowerCase()));
+}
+
+/**
  * Slug helper for synthetic emails. Lowercase, alphanumerics + hyphens, no leading
  * or trailing hyphens, no doubled hyphens. Falls back to `"unknown"` if the input
  * cleans down to empty.
@@ -79,8 +111,34 @@ export async function resolvePersonByName(
 }
 
 /**
+ * Resolve a comma-separated role-column value to a single FK target. Each
+ * named individual is resolved to a Person id (creating new Person rows for
+ * unknown names); the FIRST individual's id is returned for the FK slot.
+ *
+ * Multi-person assignments survive in the People table as separate rows even
+ * though the schema only stores one FK per role slot.
+ */
+export async function resolveFirstPersonFromMultiName(
+  db: Pick<PrismaClient, 'person'>,
+  rawName: string | undefined | null,
+): Promise<string | null> {
+  const parts = splitRoleNames(rawName);
+  if (parts.length === 0) return null;
+  let firstId: string | null = null;
+  for (const part of parts) {
+    const id = await resolvePersonByName(db, part);
+    if (firstId === null && id) firstId = id;
+  }
+  return firstId;
+}
+
+/**
  * Resolve the three role strings on a `details` map to Person ids. May create
  * new Person rows in the People table for unknown names; never touches Project.
+ *
+ * Each role string MAY be a comma-separated list ("Alex Costa, Greg Newton"),
+ * in which case every individual is ensured to exist as a Person row, but only
+ * the FIRST is used for the FK slot (the schema has one FK per role).
  *
  * Used by the Monday sync engine to compute the FKs that get folded into a single
  * `project.update` call alongside the merge patch (one DB write per project per
@@ -96,9 +154,9 @@ export async function resolvePeopleIdsFromDetails(
 }> {
   const d = details ?? {};
   return {
-    projectManagerId: await resolvePersonByName(db, d.project_manager),
-    solutionArchitectId: await resolvePersonByName(db, d.solution_architect),
-    solutionConsultantId: await resolvePersonByName(db, d.solution_consultant),
+    projectManagerId: await resolveFirstPersonFromMultiName(db, d.project_manager),
+    solutionArchitectId: await resolveFirstPersonFromMultiName(db, d.solution_architect),
+    solutionConsultantId: await resolveFirstPersonFromMultiName(db, d.solution_consultant),
   };
 }
 

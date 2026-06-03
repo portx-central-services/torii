@@ -18,6 +18,10 @@ import { registerRiskRoutes } from './routes/risks.js';
 import { registerRiskUpdateRoutes } from './routes/risk-updates.js';
 import { registerHarvestProjectsRoutes } from './routes/harvest-projects.js';
 import { registerDashboardRoutes } from './routes/dashboard.js';
+import { registerCustomerRoutes } from './routes/customers.js';
+import { registerWorkloadRoutes } from './routes/workload.js';
+import { registerPeopleOverviewRoutes } from './routes/people-overview.js';
+import { registerSearchRoutes } from './routes/search.js';
 import { setupSync } from './sync/setup.js';
 import { getPrisma, type DB } from './db.js';
 import type { Env } from './env.js';
@@ -56,6 +60,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerRiskUpdateRoutes(app, { db });
   registerHarvestProjectsRoutes(app, { db, env: opts.env });
   registerDashboardRoutes(app, { db });
+  registerCustomerRoutes(app, { db });
+  registerWorkloadRoutes(app, { db });
+  registerPeopleOverviewRoutes(app, { db });
+  registerSearchRoutes(app, { db });
 
   const engine = setupSync({
     db,

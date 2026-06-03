@@ -1,13 +1,26 @@
 import {
-  HarvestSnapshotSchema,
   type ExternalProject,
   type HarvestBreakdownTask,
-  type HarvestSnapshot,
   type TrackerAccessCheck,
   type TrackerAccessProbe,
   type TrackerAdapter,
   type TrackerMetadata,
 } from '@torii/shared';
+
+/**
+ * Hours-shaped snapshot the adapter returns from `getProjectSnapshot`. The persisted
+ * `harvest_projects` row carries additional local-DB fields (customer id, pin to a
+ * Torii project, etc.) that are layered in by the caller.
+ */
+export interface HarvestAdapterSnapshot {
+  fetchedAt: string;
+  harvestProjectId: string;
+  harvestProjectUrl: string;
+  budgetHours: number | null;
+  spentHoursBillable: number;
+  spentHoursNonbillable: number;
+  breakdown: HarvestBreakdownTask[];
+}
 
 const HARVEST_API_BASE = 'https://api.harvestapp.com/v2';
 const USER_AGENT = 'Torii (PortX delivery dashboard)';
@@ -49,6 +62,28 @@ interface HarvestProjectsPage {
   projects: HarvestProjectRow[];
   total_pages: number;
   page: number;
+}
+
+interface HarvestClientRow {
+  id: number;
+  name: string;
+  is_active?: boolean;
+}
+
+interface HarvestClientsPage {
+  clients: HarvestClientRow[];
+  total_pages: number;
+  page: number;
+}
+
+/** Result row from `listHarvestProjectsWithCustomer`. */
+export interface HarvestProjectWithCustomer {
+  id: string;
+  name: string;
+  clientId: string;
+  clientName: string;
+  isBillable: boolean;
+  url: string;
 }
 
 interface HarvestUserRow {
@@ -161,6 +196,60 @@ export class HarvestAdapter implements TrackerAdapter {
     return (await res.json()) as T;
   }
 
+  /**
+   * Every active Harvest client. Powers the customer-link UI on /trackers.
+   */
+  async listClients(): Promise<Array<{ id: string; name: string }>> {
+    const out: Array<{ id: string; name: string }> = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const data = await this.request<HarvestClientsPage>(
+        `/clients?is_active=true&per_page=100&page=${page}`,
+      );
+      for (const c of data.clients ?? []) {
+        out.push({ id: String(c.id), name: c.name });
+      }
+      totalPages = data.total_pages || 1;
+      page += 1;
+    } while (page <= totalPages);
+    return out;
+  }
+
+  /**
+   * Every active Harvest project with its client and billable flag. Used by the
+   * scheduled sync to upsert `harvest_projects` rows alongside the existing
+   * snapshot refresh.
+   */
+  async listHarvestProjectsWithCustomer(): Promise<HarvestProjectWithCustomer[]> {
+    const out: HarvestProjectWithCustomer[] = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const data = await this.request<HarvestProjectsPage>(
+        `/projects?is_active=true&per_page=100&page=${page}`,
+      );
+      for (const p of data.projects ?? []) {
+        const client = (p as { client?: { id?: number; name?: string } }).client;
+        if (!client?.id) continue;
+        const isBillable = typeof (p as { is_billable?: boolean }).is_billable === 'boolean'
+          ? (p as { is_billable?: boolean }).is_billable!
+          : true;
+        out.push({
+          id: String(p.id),
+          name: p.name,
+          clientId: String(client.id),
+          clientName: client.name ?? `Client ${client.id}`,
+          isBillable,
+          url: `https://${this.workspace}.harvestapp.com/projects/${p.id}`,
+        });
+      }
+      totalPages = data.total_pages || 1;
+      page += 1;
+    } while (page <= totalPages);
+    return out;
+  }
+
   async listProjects(): Promise<ExternalProject[]> {
     const items: ExternalProject[] = [];
     let page = 1;
@@ -219,12 +308,24 @@ export class HarvestAdapter implements TrackerAdapter {
    */
   async getProjectSnapshot(
     externalId: string,
-  ): Promise<{ snapshot: HarvestSnapshot; raw: unknown }> {
+    /**
+     * Pre-fetched budget-report row for this project. Pass when calling many
+     * `getProjectSnapshot`s in a row — `listBudgetReportByProjectId()` returns a
+     * full map in one paged scan, so callers can avoid Harvest's O(N²) rate-limit
+     * trap of re-scanning the budget report once per project. When omitted, the
+     * adapter falls back to a per-project scan.
+     */
+    prefetchedBudgetReportRow?: HarvestBudgetReportRow | null,
+  ): Promise<{ snapshot: HarvestAdapterSnapshot; raw: unknown }> {
     // 1. Project metadata (for budget and name).
     const project = await this.request<HarvestProjectRow>(`/projects/${externalId}`);
 
-    // 2. Project-budget report — gives us billable/non-billable totals across the project.
-    const budgetReportRow = await this.fetchBudgetReportRow(externalId);
+    // 2. Project-budget report — billable/non-billable totals. Re-uses the
+    //    pre-fetched row when the caller has it; otherwise scans the full report.
+    const budgetReportRow =
+      prefetchedBudgetReportRow !== undefined
+        ? prefetchedBudgetReportRow
+        : await this.fetchBudgetReportRow(externalId);
 
     // 3. Time entries — paged. Aggregates per-(task, person) hours.
     const timeEntries = await this.fetchAllTimeEntries(externalId);
@@ -239,8 +340,7 @@ export class HarvestAdapter implements TrackerAdapter {
     // surface hour-based budgets — when the project is fee-budgeted, we leave it null.
     const budgetHours = isHoursBudget(project.budget_by) && typeof project.budget === 'number' ? project.budget : null;
 
-    const snapshot: HarvestSnapshot = HarvestSnapshotSchema.parse({
-      projectId: '', // filled in by the caller (we don't know the Torii project ID here)
+    const snapshot: HarvestAdapterSnapshot = {
       fetchedAt: new Date().toISOString(),
       harvestProjectId: String(project.id),
       harvestProjectUrl: `https://${this.workspace}.harvestapp.com/projects/${project.id}`,
@@ -248,11 +348,34 @@ export class HarvestAdapter implements TrackerAdapter {
       spentHoursBillable: Number(spentBillable.toFixed(2)),
       spentHoursNonbillable: Number(spentNonbillable.toFixed(2)),
       breakdown,
-    });
+    };
 
     // `raw` retains the full Harvest payload for debugging. NEVER exposed via API/UI.
     const raw = { project, budgetReport: budgetReportRow, timeEntries };
     return { snapshot, raw };
+  }
+
+  /**
+   * Fetch the entire active-project budget report in one paged scan and return a
+   * lookup map keyed by Harvest project ID (as text). Callers that need budget
+   * data for many projects MUST use this — calling `fetchBudgetReportRow` per
+   * project re-scans the full report each time, blowing up rate limits.
+   */
+  async listBudgetReportByProjectId(): Promise<Map<string, HarvestBudgetReportRow>> {
+    const map = new Map<string, HarvestBudgetReportRow>();
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const data = await this.request<HarvestBudgetReportPage>(
+        `/reports/project_budget?page=${page}&per_page=100`,
+      );
+      for (const row of data.results ?? []) {
+        map.set(String(row.project_id), row);
+      }
+      totalPages = data.total_pages || 1;
+      page += 1;
+    } while (page <= totalPages);
+    return map;
   }
 
   private async fetchBudgetReportRow(externalId: string): Promise<HarvestBudgetReportRow | null> {

@@ -405,20 +405,22 @@ export function registerTrackerRoutes(
       throw err;
     }
 
-    // Join: for each Harvest project, find any Torii project currently linked to it.
-    const linked = await db.project.findMany({
-      where: { harvestProjectId: { in: externals.map((e) => e.externalId) } },
-      select: { id: true, name: true, harvestProjectId: true },
+    // Join: for each Harvest project, look up the cached `harvest_projects` row to find
+    // its pinned Torii project (if any). The cached row is authoritative since the new
+    // model puts the link on the Harvest-project side, not the Torii-project side.
+    const cached = await db.harvestProject.findMany({
+      where: { id: { in: externals.map((e) => e.externalId) } },
+      include: { project: { select: { id: true, name: true } } },
     });
-    const linkedByExternal = new Map(linked.map((p) => [p.harvestProjectId, p]));
+    const cachedById = new Map(cached.map((hp) => [hp.id, hp]));
 
     return externals.map((e) => {
-      const link = linkedByExternal.get(e.externalId);
+      const hp = cachedById.get(e.externalId);
       return {
         harvestProjectId: e.externalId,
         name: e.name ?? '',
-        linkedToiriProjectId: link?.id ?? null,
-        linkedToiriProjectName: link?.name ?? null,
+        linkedToiriProjectId: hp?.project?.id ?? null,
+        linkedToiriProjectName: hp?.project?.name ?? null,
       };
     });
   });
@@ -637,5 +639,102 @@ export function registerTrackerRoutes(
       'Tracker connection test',
     );
     return { connectionId: id, provider: conn.provider, ...result };
+  });
+
+  /**
+   * List every active Harvest client, joined to local customer state. Powers the
+   * customer-link table on /trackers.
+   */
+  app.get('/api/tracker/harvest/clients', async (request, reply) => {
+    requireAdmin(request);
+    const conn = await db.trackerConnection.findFirst({
+      where: { provider: TrackerProvider.harvest },
+      orderBy: { lastSyncedAt: 'desc' },
+    });
+    if (!conn) throw new NotFoundError('No active Harvest connection');
+    if (!conn.harvestAccountId) {
+      throw new ValidationError('Harvest connection is missing account ID; re-authorize');
+    }
+    const accessToken = decryptToken(conn.accessTokenEnc, env.TRACKER_TOKEN_KEY);
+    const adapter = new HarvestAdapter({
+      workspace: conn.workspace,
+      accessToken,
+      accountId: conn.harvestAccountId,
+    });
+
+    let clients;
+    try {
+      clients = await adapter.listClients();
+    } catch (err) {
+      const errName = err instanceof Error ? err.name : '';
+      if (errName === 'HarvestRateLimitError') {
+        reply.code(429);
+        return { error: 'Harvest rate-limited; retry in 15s' };
+      }
+      throw err;
+    }
+
+    const linked = await db.customer.findMany({
+      where: { harvestClientId: { in: clients.map((c) => c.id) } },
+      select: { id: true, name: true, harvestClientId: true },
+    });
+    const linkedByHarvestId = new Map(linked.map((c) => [c.harvestClientId, c]));
+
+    return clients.map((c) => {
+      const localCustomer = linkedByHarvestId.get(c.id);
+      return {
+        harvestClientId: c.id,
+        name: c.name,
+        linkedToiriCustomerId: localCustomer?.id ?? null,
+        linkedToiriCustomerName: localCustomer?.name ?? null,
+      };
+    });
+  });
+
+  const pinBody = z.object({ toriiProjectId: z.string().min(1) });
+
+  /**
+   * Pin a Harvest project to a Torii project. Enforces that the Torii project's
+   * customer matches the Harvest project's customer.
+   */
+  app.post('/api/tracker/harvest/projects/:harvestProjectId/pin', async (request) => {
+    requireAdmin(request);
+    const { harvestProjectId } = z
+      .object({ harvestProjectId: z.string().min(1) })
+      .parse(request.params);
+    const { toriiProjectId } = pinBody.parse(request.body);
+
+    const hp = await db.harvestProject.findUnique({ where: { id: harvestProjectId } });
+    if (!hp) throw new NotFoundError('Harvest project not found');
+
+    const torii = await db.project.findUnique({ where: { id: toriiProjectId } });
+    if (!torii) throw new NotFoundError('Torii project not found');
+
+    if (torii.customerId !== hp.customerId) {
+      throw new ValidationError(
+        'Pin failed: the Torii project and the Harvest project must belong to the same customer',
+      );
+    }
+
+    await db.harvestProject.update({
+      where: { id: harvestProjectId },
+      data: { projectId: toriiProjectId },
+    });
+    return { ok: true };
+  });
+
+  app.delete('/api/tracker/harvest/projects/:harvestProjectId/pin', async (request, reply) => {
+    requireAdmin(request);
+    const { harvestProjectId } = z
+      .object({ harvestProjectId: z.string().min(1) })
+      .parse(request.params);
+    const hp = await db.harvestProject.findUnique({ where: { id: harvestProjectId } });
+    if (!hp) throw new NotFoundError('Harvest project not found');
+    await db.harvestProject.update({
+      where: { id: harvestProjectId },
+      data: { projectId: null },
+    });
+    reply.code(204);
+    return null;
   });
 }

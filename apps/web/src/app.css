@@ -231,6 +231,93 @@ body {
   font-size: 13px;
 }
 
+/* Wrapper provides the positioning context for the autocomplete dropdown. */
+.topbar-search-wrap {
+  position: relative;
+  flex: 1;
+  max-width: 420px;
+  display: flex;
+}
+.topbar-search-wrap .topbar-search {
+  flex: 1;
+  max-width: none;
+}
+
+.topbar-search-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--paper);
+  border: 1px solid var(--ink-200);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  z-index: 50;
+  max-height: 480px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.topbar-search-status {
+  padding: 12px 14px;
+  color: var(--ink-500);
+  font-size: 13px;
+}
+.topbar-search-error {
+  color: #991b1b;
+}
+
+.topbar-search-group {
+  padding: 4px 0;
+}
+.topbar-search-group + .topbar-search-group {
+  border-top: 1px solid var(--ink-100, #e5e7eb);
+}
+
+.topbar-search-group-label {
+  padding: 4px 14px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-500);
+}
+
+.topbar-search-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 14px;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--ink-900, #111827);
+}
+.topbar-search-item.active,
+.topbar-search-item:hover {
+  background: var(--ink-50, #f9fafb);
+}
+
+.topbar-search-item-label {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.topbar-search-item-sub {
+  font-size: 11px;
+  color: var(--ink-500);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 .topbar-actions {
   margin-left: auto;
   display: flex;
@@ -2218,4 +2305,330 @@ a.dashboard-rag-tile:hover {
   .dashboard-attention-row {
     grid-template-columns: 1fr;
   }
+}
+
+/* ---------- Customer + multi-Harvest-project styles ---------- */
+
+.harvest-panel-count {
+  font-size: 11px;
+  color: var(--ink-500);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-left: 8px;
+}
+
+.harvest-projects-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.harvest-project-row {
+  border-top: 1px solid var(--ink-100, #e5e7eb);
+  padding-top: 10px;
+}
+
+.harvest-project-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.harvest-project-row-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.harvest-project-row-name a {
+  font-weight: 600;
+}
+
+.harvest-billable-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.harvest-billable-badge.billable {
+  background: #d1fae5;
+  color: #065f46;
+}
+.harvest-billable-badge.non-billable {
+  background: var(--ink-100, #e5e7eb);
+  color: var(--ink-700, #374151);
+}
+
+.harvest-project-row-stats {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.harvest-project-row-budget {
+  color: var(--ink-500);
+  font-weight: 500;
+}
+
+/* ---------- Workload section (per-person self-reported capacity) ---------- */
+
+.workload-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workload-availability-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--ink-100, #e5e7eb);
+}
+
+.workload-availability-label {
+  font-weight: 600;
+}
+
+.workload-availability-value {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.workload-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.workload-table th,
+.workload-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--ink-100, #e5e7eb);
+}
+
+.workload-table thead th {
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-500);
+  border-bottom: 1px solid var(--ink-200);
+}
+
+.workload-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.workload-phase-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--ink-100, #e5e7eb);
+  color: var(--ink-700, #374151);
+}
+
+.workload-allocated {
+  font-size: 11px;
+  color: var(--ink-500);
+  font-variant-numeric: tabular-nums;
+}
+
+.workload-empty {
+  color: var(--ink-500);
+  font-style: italic;
+}
+
+.workload-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.workload-add-label {
+  font-size: 12px;
+  color: var(--ink-600);
+}
+
+.workload-advisory {
+  font-size: 12px;
+  color: var(--ink-600);
+  padding-top: 4px;
+}
+
+.workload-advisory strong {
+  color: var(--ink-900, #111827);
+  font-variant-numeric: tabular-nums;
+}
+
+.workload-advisory-warn {
+  color: #92400e;
+  background: #fef3c7;
+  padding: 6px 10px;
+  border-radius: var(--radius-md, 8px);
+}
+
+.workload-advisory-warn strong {
+  color: #78350f;
+}
+
+.workload-advisory-stale {
+  color: var(--ink-500);
+}
+
+.pct-input-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.pct-input {
+  width: 64px;
+  text-align: right;
+  padding: 4px 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pct-input-suffix {
+  color: var(--ink-500);
+}
+
+/* ---------- People index (/people) ---------- */
+
+.people-table th {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-500);
+  user-select: none;
+}
+
+.people-table tbody tr:not(.people-table-expanded):hover {
+  background: var(--ink-50, #f9fafb);
+}
+
+.people-table-expanded {
+  background: var(--ink-50, #f9fafb);
+  border-bottom: 1px solid var(--ink-100);
+}
+
+.people-capacity-text {
+  font-variant-numeric: tabular-nums;
+}
+
+.people-overcommit-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.people-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.people-expand-btn:hover {
+  background: var(--ink-100, #e5e7eb);
+}
+
+.people-expand-chevron {
+  display: inline-block;
+  transition: transform 0.15s ease;
+  color: var(--ink-500);
+  font-size: 10px;
+}
+.people-expand-chevron.open {
+  transform: rotate(90deg);
+}
+
+/* Role + admin + Harvest-unlinked chips on the People index. */
+.role-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.role-chip.role-pm {
+  background: #dbeafe;
+  color: #1e3a8a;
+}
+.role-chip.role-viewer {
+  background: var(--ink-100, #e5e7eb);
+  color: var(--ink-700, #374151);
+}
+
+.role-admin {
+  margin-left: 6px;
+  font-size: 11px;
+  color: #92400e;
+  font-weight: 600;
+}
+
+.role-unlinked {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--ink-100, #e5e7eb);
+  color: var(--ink-500);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Customer-group headers inside an expanded People row. */
+.people-customer-header td {
+  border-top: 1px solid var(--ink-200);
+}
+.people-customer-header:first-child td {
+  border-top: 0;
+}
+.people-customer-label {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.people-customer-count {
+  margin-left: 8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-500);
+}
+.people-project-row {
+  background: rgba(255, 255, 255, 0.5);
 }

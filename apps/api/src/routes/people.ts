@@ -123,7 +123,8 @@ export function registerPeopleRoutes(
         ],
       },
       include: {
-        harvestSnapshot: true,
+        customer: true,
+        harvestProjects: true,
         projectManager: true,
         solutionArchitect: true,
         solutionConsultant: true,
@@ -214,23 +215,23 @@ export function registerPeopleRoutes(
     const person = await db.person.findUnique({ where: { id } });
     if (!person) throw new NotFoundError('Person not found');
 
-    // All of this Person's allocations, grouped by project, with the joined Project + snapshot.
+    // All of this Person's allocations, grouped by project. Each project's pinned
+    // Harvest projects are joined so we can sum actuals across them.
     const allocations = await db.allocation.findMany({
       where: { personId: id },
       include: {
         project: {
-          include: { harvestSnapshot: true },
+          include: { harvestProjects: true },
         },
       },
       orderBy: { start: 'asc' },
     });
 
-    // Aggregate planned hours per project.
     interface PerProject {
       projectId: string;
       projectName: string;
       plannedHours: number;
-      snapshot: typeof allocations[number]['project']['harvestSnapshot'];
+      harvestProjects: typeof allocations[number]['project']['harvestProjects'];
     }
     const byProject = new Map<string, PerProject>();
     for (const a of allocations) {
@@ -248,24 +249,26 @@ export function registerPeopleRoutes(
           projectId: a.projectId,
           projectName: a.project.name,
           plannedHours: planned,
-          snapshot: a.project.harvestSnapshot,
+          harvestProjects: a.project.harvestProjects,
         });
       }
     }
 
-    // For each project, compute actual hours by summing breakdown[].people[].hours
-    // where the harvest personId === person.harvestUserId.
+    // For each project, sum actual hours across every pinned Harvest project's
+    // breakdown[].people[] rows matching this Person's harvest_user_id.
     const harvestUserId = person.harvestUserId;
     const rows = [...byProject.values()].map((p) => {
       let actualHours: number | null = null;
-      if (harvestUserId && p.snapshot) {
-        const breakdown = (p.snapshot.breakdown ?? []) as Array<{
-          people?: Array<{ personId: string; hours: number }>;
-        }>;
+      if (harvestUserId && p.harvestProjects.length > 0) {
         let sum = 0;
-        for (const task of breakdown) {
-          for (const personRow of task.people ?? []) {
-            if (personRow.personId === harvestUserId) sum += personRow.hours;
+        for (const hp of p.harvestProjects) {
+          const breakdown = (hp.breakdown ?? []) as Array<{
+            people?: Array<{ personId: string; hours: number }>;
+          }>;
+          for (const task of breakdown) {
+            for (const personRow of task.people ?? []) {
+              if (personRow.personId === harvestUserId) sum += personRow.hours;
+            }
           }
         }
         actualHours = Number(sum.toFixed(2));

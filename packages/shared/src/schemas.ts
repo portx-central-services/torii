@@ -116,6 +116,12 @@ export const PersonOutSchema = z.object({
   isAdmin: z.boolean(),
 });
 
+/** Lightweight resolved Customer row exposed alongside Project responses. */
+export const CustomerRefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+});
+
 export const ProjectOutSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -125,17 +131,20 @@ export const ProjectOutSchema = z.object({
   details: ProjectDetailsSchema.optional(),
   /** Derived from `details.fintech_parent` server-side; not a persisted column. */
   projectType: ProjectTypeSchema,
-  /** Numeric Harvest project ID when the project is linked; null otherwise. */
-  harvestProjectId: z.string().nullable(),
+  /** Customer this project belongs to. Null when the project has not been mapped to a customer yet. */
+  customerId: z.string().nullable(),
+  /** Resolved customer row (id + name). Null when `customerId` is null. */
+  customer: CustomerRefSchema.nullable(),
   /**
-   * Derived from the cached Harvest snapshot: `spent_hours > budget_hours` (strict).
-   * False when there's no snapshot, no link, or `budget_hours` is null/0. Read-only
-   * on the API — `projects` has no `over_budget` column.
+   * Derived from the customer's pinned `HarvestProject` rows: `Σ spent_hours > Σ budget_hours`.
+   * Sums across every `harvest_projects` row with `project_id = this project`. False when
+   * no Harvest project is pinned, when every pinned row has a null `budget_hours`, or when
+   * the total budget is zero. Read-only on the API.
    */
   overBudget: z.boolean(),
-  /** Budget hours from the cached snapshot. Null when no snapshot or no budget set. */
+  /** Sum of budget hours across pinned Harvest projects. Null when no pinned row has a budget. */
   budgetHours: z.number().nullable(),
-  /** Total spent hours (billable + non-billable). Null when no snapshot. */
+  /** Sum of (billable + non-billable) spent hours across pinned Harvest projects. Null when no pinned rows. */
   spentHours: z.number().nullable(),
   ownerId: z.string().nullable(),
   /**
@@ -282,24 +291,35 @@ export const HarvestBreakdownTaskSchema = z
   .strict();
 
 /**
- * Snapshot of a single Harvest project's hours data, cached on the Torii side.
+ * Snapshot of a single Harvest project's hours data, cached on the Torii side as a
+ * `harvest_projects` row. Hours-only by design (D9). The full Harvest API payload
+ * is stored separately on `harvest_projects.raw` for debugging and is never surfaced
+ * through this schema.
  *
- * Intentionally omits cost / invoicing fields (D9). The raw Harvest payload is
- * stored separately on `project_harvest_snapshots.raw` for debugging and is never
- * surfaced through this schema.
+ * The `.strict()` is load-bearing: it actively rejects any payload that smuggles
+ * monetary keys (e.g., `costCents`) through this surface — defense-in-depth for D9.
  */
-export const HarvestSnapshotSchema = z
+export const HarvestProjectSnapshotSchema = z
   .object({
-    projectId: z.string(),
-    fetchedAt: z.string(),
-    harvestProjectId: z.string(),
+    /** The Harvest project's own numeric ID, stored as text. */
+    id: z.string(),
+    name: z.string(),
+    /** Customer this Harvest project belongs to. */
+    customerId: z.string(),
+    /** Torii project this Harvest project is pinned to, or null when customer-only (support). */
+    projectId: z.string().nullable(),
+    isBillable: z.boolean(),
     harvestProjectUrl: z.string(),
     budgetHours: z.number().nullable(),
     spentHoursBillable: z.number().nonnegative(),
     spentHoursNonbillable: z.number().nonnegative(),
     breakdown: z.array(HarvestBreakdownTaskSchema),
+    fetchedAt: z.string(),
   })
   .strict();
+
+/** Backwards-compatibility alias for the old `HarvestSnapshotSchema` name. Use `HarvestProjectSnapshotSchema` going forward. */
+export const HarvestSnapshotSchema = HarvestProjectSnapshotSchema;
 
 export type KeyDates = z.infer<typeof KeyDatesSchema>;
 export type ProjectDetails = z.infer<typeof ProjectDetailsSchema>;
@@ -335,7 +355,138 @@ export const PersonReconciliationRowSchema = z.object({
 export type PersonReconciliationRow = z.infer<typeof PersonReconciliationRowSchema>;
 export type HarvestBreakdownPerson = z.infer<typeof HarvestBreakdownPersonSchema>;
 export type HarvestBreakdownTask = z.infer<typeof HarvestBreakdownTaskSchema>;
-export type HarvestSnapshot = z.infer<typeof HarvestSnapshotSchema>;
+export type HarvestProjectSnapshot = z.infer<typeof HarvestProjectSnapshotSchema>;
+/** Deprecated alias kept while consumers migrate. */
+export type HarvestSnapshot = HarvestProjectSnapshot;
+export type CustomerRef = z.infer<typeof CustomerRefSchema>;
+
+/** Row returned by `GET /api/customers` (one entry per Torii customer). */
+export const CustomerListItemSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  harvestClientId: z.string().nullable(),
+  mondayProjectCount: z.number().int().nonnegative(),
+  harvestProjectCount: z.number().int().nonnegative(),
+  lifetimeHours: z.number().nonnegative(),
+});
+export type CustomerListItem = z.infer<typeof CustomerListItemSchema>;
+
+/** Row in the per-customer reconciliation `perProject` array. */
+export const CustomerReconciliationProjectRowSchema = z.object({
+  projectId: z.string(),
+  projectName: z.string(),
+  plannedHours: z.number().nonnegative(),
+  actualHours: z.number().nonnegative(),
+  varianceHours: z.number(),
+  variancePct: z.number().nullable(),
+  linkedHarvestProjectIds: z.array(z.string()),
+});
+
+/** Response shape for `GET /api/customers/:id/reconciliation`. */
+export const CustomerReconciliationSchema = z.object({
+  customerId: z.string(),
+  customerName: z.string(),
+  /** "Planned" = Σ over allocations of (pct × defaultCapacityPct × 40 × weeks). Reads Torii allocations, NOT Harvest budgets. */
+  plannedHours: z.number().nonnegative(),
+  actualHours: z.number().nonnegative(),
+  /** Hours logged on Harvest projects under this customer that are NOT pinned to any Torii project. */
+  supportHours: z.number().nonnegative(),
+  /** "Budget" = Σ of `harvest_projects.budgetHours` across this customer's rows (Harvest-side commitment). Null when no Harvest project has a budget set. */
+  budgetHours: z.number().nonnegative().nullable(),
+  /** actualHours - plannedHours. Signed. */
+  varianceHours: z.number(),
+  /** Null when plannedHours is 0. */
+  variancePct: z.number().nullable(),
+  /** actualHours - budgetHours. Signed. Null when budgetHours is null. */
+  budgetVarianceHours: z.number().nullable(),
+  /** Null when budgetHours is null or 0. */
+  budgetVariancePct: z.number().nullable(),
+  perProject: z.array(CustomerReconciliationProjectRowSchema),
+});
+export type CustomerReconciliation = z.infer<typeof CustomerReconciliationSchema>;
+export type CustomerReconciliationProjectRow = z.infer<typeof CustomerReconciliationProjectRowSchema>;
+
+/** Row returned by `GET /api/people/overview` (one per Person, plus expander data). */
+export const PeopleOverviewRowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string().email(),
+  role: RoleSchema,
+  isAdmin: z.boolean(),
+  harvestUserId: z.string().nullable(),
+  defaultCapacityPct: z.number().int().min(0).max(100),
+  availabilityPct: z.number().int().min(0).max(100),
+  /** Σ weeklyPct across the person's capacity rows. */
+  committedPct: z.number().int().min(0),
+  /** Sum of Harvest hours in the trailing 30-day window; null when unlinked or not yet computed. */
+  billedHoursLast30d: z.number().nullable(),
+  billedHoursAsOf: z.string().nullable(),
+  lastReportedAt: z.string().nullable(),
+  currentProjects: z.array(
+    z.object({
+      projectId: z.string(),
+      projectName: z.string(),
+      projectPhase: PhaseSchema,
+      /** Customer this project belongs to. Null when the project isn't mapped to a customer yet. */
+      customerId: z.string().nullable(),
+      customerName: z.string().nullable(),
+      weeklyPct: z.number().int().min(0).max(100),
+      allocatedPct: z.number().int().min(0),
+      lifetimeHours: z.number().nullable(),
+      varianceBucket: z.enum(['green', 'amber', 'red', 'neutral']),
+    }),
+  ),
+});
+export type PeopleOverviewRow = z.infer<typeof PeopleOverviewRowSchema>;
+
+/** Row in the per-person workload table on `/people/:id`. */
+export const WorkloadRowSchema = z.object({
+  projectId: z.string(),
+  projectName: z.string(),
+  projectPhase: PhaseSchema,
+  projectState: ProjectStateSchema,
+  /** Self-reported weekly capacity; 0 when no row exists for that (person, project). */
+  weeklyPct: z.number().int().min(0).max(100),
+  /** Sum of Allocation.pct for active allocations (today between start and end). */
+  allocatedPct: z.number().int().min(0),
+  /** Sum of Harvest hours for this person on this project. Null when person isn't Harvest-linked. */
+  lifetimeHours: z.number().nullable(),
+  varianceBucket: z.enum(['green', 'amber', 'red', 'neutral']),
+});
+export type WorkloadRow = z.infer<typeof WorkloadRowSchema>;
+
+/** Response shape for `GET /api/people/:id/workload`. */
+export const WorkloadResponseSchema = z.object({
+  availabilityPct: z.number().int().min(0).max(100),
+  defaultCapacityPct: z.number().int().min(0).max(100),
+  /** ISO timestamp of the most recent capacity-row update; null when no rows exist. */
+  lastReportedAt: z.string().nullable(),
+  projects: z.array(WorkloadRowSchema),
+});
+export type WorkloadResponse = z.infer<typeof WorkloadResponseSchema>;
+
+/** Body schema for `PATCH /api/people/:id/workload`. */
+export const WorkloadUpdateSchema = z.object({
+  availabilityPct: z.number().int().min(0).max(100).optional(),
+  projects: z
+    .array(
+      z.object({
+        projectId: z.string().min(1),
+        weeklyPct: z.number().int().min(0).max(100),
+      }),
+    )
+    .optional(),
+});
+export type WorkloadUpdate = z.infer<typeof WorkloadUpdateSchema>;
+
+/** Row returned by `GET /api/tracker/harvest/clients` (one entry per active Harvest client). */
+export const HarvestClientListItemSchema = z.object({
+  harvestClientId: z.string(),
+  name: z.string(),
+  linkedToiriCustomerId: z.string().nullable(),
+  linkedToiriCustomerName: z.string().nullable(),
+});
+export type HarvestClientListItem = z.infer<typeof HarvestClientListItemSchema>;
 
 /** Response shape for `GET /api/dashboard/summary`. Single bundle covering every dashboard section. */
 export const DashboardSummarySchema = z.object({

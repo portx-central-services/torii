@@ -1,12 +1,27 @@
 import type {
+  CustomerListItem,
+  CustomerReconciliation,
   DashboardSummary,
+  HarvestClientListItem,
+  PeopleOverviewRow,
   Phase,
   ProjectState,
   Role,
+  WorkloadResponse,
+  WorkloadUpdate,
 } from '@torii/shared';
 import { api } from './client.js';
 
-export type { DashboardSummary } from '@torii/shared';
+export type {
+  CustomerListItem,
+  CustomerReconciliation,
+  DashboardSummary,
+  HarvestClientListItem,
+  PeopleOverviewRow,
+  WorkloadResponse,
+  WorkloadRow,
+  WorkloadUpdate,
+} from '@torii/shared';
 
 export interface MeResponse {
   authenticated: boolean;
@@ -105,13 +120,15 @@ export interface Project {
   details: ProjectDetails;
   /** Derived from `details.fintech_parent`; read-only on the API. */
   projectType: ProjectType;
-  /** Numeric Harvest project ID when the project is linked; null otherwise. */
-  harvestProjectId: string | null;
-  /** Derived from the cached Harvest snapshot; false when no snapshot or no budget. */
+  /** Customer that owns this project. Null when not yet mapped. */
+  customerId: string | null;
+  /** Resolved customer row when included; null otherwise. */
+  customer: { id: string; name: string } | null;
+  /** Derived from pinned Harvest projects (Σ spent > Σ budget). False when no Harvest project is pinned. */
   overBudget: boolean;
-  /** Budget hours from the cached snapshot. Null when no snapshot or no budget set. */
+  /** Sum of budget hours across pinned Harvest projects. Null when no pinned row has a budget. */
   budgetHours: number | null;
-  /** Total spent hours (billable + non-billable). Null when no snapshot. */
+  /** Sum of (billable + non-billable) spent hours across pinned Harvest projects. Null when no pinned rows. */
   spentHours: number | null;
   ownerId: string | null;
   /** Resolved Person rows. Null when the FK isn't set; UI falls back to `details.*`. */
@@ -322,18 +339,107 @@ export const endpoints = {
 
   listHarvestProjects: () =>
     api.get<HarvestProjectListItem[]>('/api/tracker/harvest/projects'),
-  getHarvestSnapshot: (projectId: string) =>
-    api.get<HarvestSnapshot>(`/api/projects/${projectId}/harvest`),
-  refreshHarvestSnapshot: (projectId: string) =>
-    api.post<HarvestSnapshot>(`/api/projects/${projectId}/harvest/refresh`, {}),
-  linkHarvestProject: (projectId: string, harvestProjectId: string) =>
-    api.post<{ ok: true }>(`/api/projects/${projectId}/harvest/link`, { harvestProjectId }),
-  unlinkHarvestProject: (projectId: string) =>
-    api.delete<void>(`/api/projects/${projectId}/harvest/link`),
+  /** Per-project: every Harvest project pinned to this Torii project, returned as an array. */
+  getProjectHarvest: (projectId: string) =>
+    api.get<{ harvestProjects: HarvestProjectSnapshot[] }>(`/api/projects/${projectId}/harvest`),
+  refreshProjectHarvest: (projectId: string) =>
+    api.post<{ harvestProjects: HarvestProjectSnapshot[] }>(`/api/projects/${projectId}/harvest/refresh`, {}),
 
   getDashboardSummary: () =>
     api.get<DashboardSummary>('/api/dashboard/summary'),
+
+  // Customers
+  listCustomers: () => api.get<CustomerListItem[]>('/api/customers'),
+  getCustomer: (id: string) => api.get<CustomerDetail>(`/api/customers/${id}`),
+  createCustomer: (body: { name: string; harvestClientId?: string }) =>
+    api.post<{ id: string; name: string; harvestClientId: string | null }>(`/api/customers`, body),
+  updateCustomer: (id: string, body: { name?: string; harvestClientId?: string | null }) =>
+    api.patch<{ id: string; name: string; harvestClientId: string | null }>(`/api/customers/${id}`, body),
+  customerReconciliation: (id: string) =>
+    api.get<CustomerReconciliation>(`/api/customers/${id}/reconciliation`),
+
+  // Harvest client + pin linking (admin only)
+  listHarvestClients: () =>
+    api.get<HarvestClientListItem[]>('/api/tracker/harvest/clients'),
+  linkCustomerToHarvestClient: (customerId: string, harvestClientId: string) =>
+    api.post<{ id: string; name: string; harvestClientId: string | null }>(
+      `/api/customers/${customerId}/harvest-link`,
+      { harvestClientId },
+    ),
+  unlinkCustomerHarvestClient: (customerId: string) =>
+    api.delete<void>(`/api/customers/${customerId}/harvest-link`),
+  pinHarvestProject: (harvestProjectId: string, toriiProjectId: string) =>
+    api.post<{ ok: true }>(
+      `/api/tracker/harvest/projects/${harvestProjectId}/pin`,
+      { toriiProjectId },
+    ),
+  unpinHarvestProject: (harvestProjectId: string) =>
+    api.delete<void>(`/api/tracker/harvest/projects/${harvestProjectId}/pin`),
+
+  // Per-person workload (self-reported capacity)
+  getPersonWorkload: (id: string) =>
+    api.get<WorkloadResponse>(`/api/people/${id}/workload`),
+  updatePersonWorkload: (id: string, body: WorkloadUpdate) =>
+    api.patch<WorkloadResponse>(`/api/people/${id}/workload`, body),
+
+  // People index overview
+  getPeopleOverview: () =>
+    api.get<PeopleOverviewRow[]>('/api/people/overview'),
+
+  // Topbar global search
+  search: (q: string) =>
+    api.get<SearchResults>('/api/search', { q }),
 };
+
+/** Result shape from `GET /api/search?q=...`. Each list capped server-side. */
+export interface SearchResults {
+  projects: Array<{ id: string; name: string; phase: Phase; state: ProjectState }>;
+  customers: Array<{ id: string; name: string }>;
+  people: Array<{ id: string; name: string; role: Role; isAdmin: boolean }>;
+}
+
+/**
+ * Per-Harvest-project snapshot row returned by `GET /api/projects/:id/harvest`.
+ * Hours-only by design (D9).
+ */
+export interface HarvestProjectSnapshot {
+  /** Harvest's own numeric project ID, stored as text. */
+  id: string;
+  name: string;
+  customerId: string;
+  /** Torii project this Harvest project is pinned to, or null when customer-only. */
+  projectId: string | null;
+  isBillable: boolean;
+  harvestProjectUrl: string;
+  budgetHours: number | null;
+  spentHoursBillable: number;
+  spentHoursNonbillable: number;
+  breakdown: HarvestBreakdownTask[];
+  fetchedAt: string;
+}
+
+/** Response from `GET /api/customers/:id` — single customer with resolved relations. */
+export interface CustomerDetail {
+  id: string;
+  name: string;
+  harvestClientId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  projects: Project[];
+  harvestProjects: Array<{
+    id: string;
+    name: string;
+    customerId: string;
+    projectId: string | null;
+    isBillable: boolean;
+    harvestProjectUrl: string;
+    budgetHours: number | null;
+    spentHoursBillable: number;
+    spentHoursNonbillable: number;
+    fetchedAt: string;
+    pinnedProject: { id: string; name: string } | null;
+  }>;
+}
 
 /** Per-(task, person) row in a Harvest snapshot. Hours only — no cost data. */
 export interface HarvestBreakdownPerson {

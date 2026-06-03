@@ -1,6 +1,12 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { endpoints, type HarvestSnapshot, type Project, type ProjectDetailKey } from '../api/endpoints.js';
+import {
+  endpoints,
+  type HarvestProjectSnapshot,
+  type Project,
+  type ProjectDetailKey,
+} from '../api/endpoints.js';
 import { ApiError } from '../api/client.js';
 
 interface HarvestPanelProps {
@@ -9,9 +15,11 @@ interface HarvestPanelProps {
 }
 
 /**
- * Project-detail Harvest panel — hours-only by design (D9). Renders four metric
- * tiles, the per-(task, person) breakdown accordion, and a "View in Harvest →"
- * link to the source. No cost or invoicing data.
+ * Project-detail Harvest panel — hours-only by design (D9). Renders one sub-row per
+ * pinned Harvest project (a Torii project can have many — typically one per phase),
+ * plus a total line summing across them. The customer-level rollup (including any
+ * "support" Harvest projects not pinned to a specific Torii project) lives on
+ * `/customers/:id`.
  */
 export function HarvestPanel({ project, isPm }: HarvestPanelProps) {
   const queryClient = useQueryClient();
@@ -19,12 +27,12 @@ export function HarvestPanel({ project, isPm }: HarvestPanelProps) {
 
   const snapQ = useQuery({
     queryKey: ['harvest-snapshot', project.id],
-    queryFn: () => endpoints.getHarvestSnapshot(project.id),
+    queryFn: () => endpoints.getProjectHarvest(project.id),
     retry: false,
   });
 
   const refreshMutation = useMutation({
-    mutationFn: () => endpoints.refreshHarvestSnapshot(project.id),
+    mutationFn: () => endpoints.refreshProjectHarvest(project.id),
     onSuccess: async () => {
       setError(null);
       await queryClient.invalidateQueries({ queryKey: ['harvest-snapshot', project.id] });
@@ -40,38 +48,10 @@ export function HarvestPanel({ project, isPm }: HarvestPanelProps) {
       ),
   });
 
-  // "Not yet refreshed" state (snapshot endpoint returns 404)
-  const isNotYetRefreshed = snapQ.isError && snapQ.error instanceof ApiError && snapQ.error.status === 404;
-
   if (snapQ.isLoading) {
     return (
       <section className="section-card harvest-panel">
         <div className="empty">Loading Harvest snapshot…</div>
-      </section>
-    );
-  }
-
-  if (isNotYetRefreshed) {
-    return (
-      <section className="section-card harvest-panel">
-        <div className="harvest-panel-header">
-          <h3>Harvest</h3>
-          {isPm && (
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => refreshMutation.mutate()}
-              disabled={refreshMutation.isPending}
-            >
-              {refreshMutation.isPending ? 'Refreshing…' : 'Refresh from Harvest'}
-            </button>
-          )}
-        </div>
-        <div className="empty">
-          Not yet refreshed.{' '}
-          {isPm ? 'Click "Refresh from Harvest" to fetch the latest hours.' : 'Ask a PM to refresh.'}
-        </div>
-        {error && <div className="text-red-700" style={{ marginTop: 8 }}>{error}</div>}
       </section>
     );
   }
@@ -86,28 +66,67 @@ export function HarvestPanel({ project, isPm }: HarvestPanelProps) {
     );
   }
 
-  const snap = snapQ.data!;
-  const totalSpent = snap.spentHoursBillable + snap.spentHoursNonbillable;
-  const remaining = snap.budgetHours === null ? null : snap.budgetHours - totalSpent;
-  const pctOver = snap.budgetHours && snap.budgetHours > 0
-    ? Math.round(((totalSpent - snap.budgetHours) / snap.budgetHours) * 100)
-    : null;
+  const harvestProjects = snapQ.data?.harvestProjects ?? [];
+
+  if (harvestProjects.length === 0) {
+    return (
+      <section className="section-card harvest-panel">
+        <div className="harvest-panel-header">
+          <h3>Harvest</h3>
+        </div>
+        <div className="empty">
+          No Harvest project pinned for phase-level reconciliation.{' '}
+          {project.customerId ? (
+            <>
+              See the{' '}
+              <Link to={`/customers/${project.customerId}`}>customer page</Link> for the customer-wide
+              rollup.
+            </>
+          ) : (
+            <>
+              Map this project to a customer in <Link to="/trackers">Trackers</Link> first.
+            </>
+          )}
+        </div>
+      </section>
+    );
+  }
+
+  const totalSpent = harvestProjects.reduce(
+    (s, hp) => s + hp.spentHoursBillable + hp.spentHoursNonbillable,
+    0,
+  );
+  const totalBudget = harvestProjects.reduce(
+    (s, hp) => s + (hp.budgetHours ?? 0),
+    0,
+  );
+  const anyBudget = harvestProjects.some((hp) => hp.budgetHours !== null);
+  const remaining = anyBudget ? totalBudget - totalSpent : null;
+  const pctOver =
+    anyBudget && totalBudget > 0
+      ? Math.round(((totalSpent - totalBudget) / totalBudget) * 100)
+      : null;
   const isOver = pctOver !== null && pctOver > 0;
-  const fillPct = snap.budgetHours && snap.budgetHours > 0
-    ? Math.min(100, (totalSpent / snap.budgetHours) * 100)
-    : 0;
+  const fillPct = anyBudget && totalBudget > 0 ? Math.min(100, (totalSpent / totalBudget) * 100) : 0;
+
+  const newest = harvestProjects.reduce<Date | null>((latest, hp) => {
+    const d = new Date(hp.fetchedAt);
+    if (!latest || d > latest) return d;
+    return latest;
+  }, null);
 
   return (
     <section className="section-card harvest-panel">
       <div className="harvest-panel-header">
-        <h3>Harvest</h3>
+        <h3>
+          Harvest <span className="harvest-panel-count">{harvestProjects.length} pinned</span>
+        </h3>
         <div className="harvest-panel-header-actions">
-          <a className="link" href={snap.harvestProjectUrl} target="_blank" rel="noopener noreferrer">
-            View in Harvest →
-          </a>
-          <span className="harvest-panel-refresh-time">
-            Updated {relativeTime(new Date(snap.fetchedAt))}
-          </span>
+          {newest && (
+            <span className="harvest-panel-refresh-time">
+              Updated {relativeTime(newest)}
+            </span>
+          )}
           {isPm && (
             <button
               type="button"
@@ -126,16 +145,14 @@ export function HarvestPanel({ project, isPm }: HarvestPanelProps) {
       <div className="harvest-tiles">
         <Tile label="Total hours">
           <div className="harvest-tile-value">{fmtHours(totalSpent)}</div>
-          <div className="harvest-tile-sub">
-            Billable {fmtHours(snap.spentHoursBillable)} · Non-billable {fmtHours(snap.spentHoursNonbillable)}
-          </div>
+          <div className="harvest-tile-sub">Across {harvestProjects.length} Harvest project{harvestProjects.length === 1 ? '' : 's'}</div>
         </Tile>
         <Tile label="Budget hours">
           <div className="harvest-tile-value">
-            {snap.budgetHours === null ? '—' : fmtHours(snap.budgetHours)}
+            {anyBudget ? fmtHours(totalBudget) : '—'}
           </div>
           <div className="harvest-tile-sub">
-            {snap.budgetHours === null ? 'No budget set in Harvest' : 'as configured in Harvest'}
+            {anyBudget ? 'Sum of pinned budgets' : 'No budgets set in Harvest'}
           </div>
         </Tile>
         <Tile label="Budget remaining">
@@ -145,7 +162,7 @@ export function HarvestPanel({ project, isPm }: HarvestPanelProps) {
               <span className="harvest-tile-pct"> ({pctOver > 0 ? '+' : ''}{pctOver}%)</span>
             )}
           </div>
-          {snap.budgetHours !== null && (
+          {anyBudget && totalBudget > 0 && (
             <div className="harvest-budget-bar">
               <div
                 className={`harvest-budget-bar-fill ${isOver ? 'harvest-budget-bar-fill-over' : ''}`}
@@ -157,7 +174,11 @@ export function HarvestPanel({ project, isPm }: HarvestPanelProps) {
         </Tile>
       </div>
 
-      <HarvestBreakdown snapshot={snap} project={project} />
+      <div className="harvest-projects-list">
+        {harvestProjects.map((hp) => (
+          <HarvestProjectRow key={hp.id} snapshot={hp} project={project} />
+        ))}
+      </div>
     </section>
   );
 }
@@ -171,54 +192,80 @@ function Tile({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-function HarvestBreakdown({ snapshot, project }: { snapshot: HarvestSnapshot; project: Project }) {
+function HarvestProjectRow({
+  snapshot,
+  project,
+}: {
+  snapshot: HarvestProjectSnapshot;
+  project: Project;
+}) {
   const [open, setOpen] = useState(false);
-
-  if (snapshot.breakdown.length === 0) {
-    return null;
-  }
+  const spent = snapshot.spentHoursBillable + snapshot.spentHoursNonbillable;
 
   return (
-    <details className="harvest-breakdown" open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
-      <summary>By task and person ({snapshot.breakdown.length} task{snapshot.breakdown.length === 1 ? '' : 's'})</summary>
-      <div className="harvest-breakdown-body">
-        {snapshot.breakdown.map((task) => (
-          <div key={task.taskId} className="harvest-task-group">
-            <div className="harvest-task-header">
-              <span className="harvest-task-name">{task.taskName}</span>
-              <span className="harvest-task-hours">
-                {fmtHours(task.taskSpentHours)}
-                {task.taskBudgetHours !== null && (
-                  <span className="harvest-task-budget"> / {fmtHours(task.taskBudgetHours)}</span>
-                )}
-              </span>
-            </div>
-            <div className="harvest-person-rows">
-              {task.people.map((person) => {
-                const role = matchPersonRole(person.personName, project);
-                return (
-                  <div key={person.personId} className="harvest-person-row">
-                    <span className="harvest-person-name">
-                      {role && <span className="harvest-role-badge">{role}</span>}
-                      {person.personName}
-                      {person.archived && <span className="harvest-archived"> (archived)</span>}
-                    </span>
-                    <span className="harvest-person-hours">{fmtHours(person.hours)}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ))}
+    <div className="harvest-project-row">
+      <div className="harvest-project-row-head">
+        <div className="harvest-project-row-name">
+          <a href={snapshot.harvestProjectUrl} target="_blank" rel="noopener noreferrer">
+            {snapshot.name}
+          </a>
+          <span className={`harvest-billable-badge ${snapshot.isBillable ? 'billable' : 'non-billable'}`}>
+            {snapshot.isBillable ? 'Billable' : 'Non-billable'}
+          </span>
+        </div>
+        <div className="harvest-project-row-stats">
+          <span className="harvest-project-row-spent">{fmtHours(spent)}</span>
+          {snapshot.budgetHours !== null && (
+            <span className="harvest-project-row-budget"> / {fmtHours(snapshot.budgetHours)}</span>
+          )}
+        </div>
       </div>
-    </details>
+      {snapshot.breakdown.length > 0 && (
+        <details
+          className="harvest-breakdown"
+          open={open}
+          onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+        >
+          <summary>
+            By task and person ({snapshot.breakdown.length} task
+            {snapshot.breakdown.length === 1 ? '' : 's'})
+          </summary>
+          <div className="harvest-breakdown-body">
+            {snapshot.breakdown.map((task) => (
+              <div key={task.taskId} className="harvest-task-group">
+                <div className="harvest-task-header">
+                  <span className="harvest-task-name">{task.taskName}</span>
+                  <span className="harvest-task-hours">
+                    {fmtHours(task.taskSpentHours)}
+                    {task.taskBudgetHours !== null && (
+                      <span className="harvest-task-budget"> / {fmtHours(task.taskBudgetHours)}</span>
+                    )}
+                  </span>
+                </div>
+                <div className="harvest-person-rows">
+                  {task.people.map((person) => {
+                    const role = matchPersonRole(person.personName, project);
+                    return (
+                      <div key={person.personId} className="harvest-person-row">
+                        <span className="harvest-person-name">
+                          {role && <span className="harvest-role-badge">{role}</span>}
+                          {person.personName}
+                          {person.archived && <span className="harvest-archived"> (archived)</span>}
+                        </span>
+                        <span className="harvest-person-hours">{fmtHours(person.hours)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
   );
 }
 
-/**
- * Match a Harvest person name against the project's PM/SA/SC details. Returns the
- * role badge label when a name matches (case-insensitive); otherwise null.
- */
 function matchPersonRole(personName: string, project: Project): 'PM' | 'SA' | 'SC' | null {
   const target = personName.trim().toLowerCase();
   if (!target) return null;

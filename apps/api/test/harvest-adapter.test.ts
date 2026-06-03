@@ -192,14 +192,17 @@ describe('HarvestAdapter', () => {
 
   it('HarvestSnapshotSchema (with .strict()) rejects payloads carrying monetary keys', () => {
     const valid = {
+      id: '1',
+      name: 'Test project',
+      customerId: 'cust-1',
       projectId: 'proj-1',
-      fetchedAt: new Date().toISOString(),
-      harvestProjectId: '1',
+      isBillable: true,
       harvestProjectUrl: 'https://portx.harvestapp.com/projects/1',
       budgetHours: 100,
       spentHoursBillable: 50,
       spentHoursNonbillable: 0,
       breakdown: [],
+      fetchedAt: new Date().toISOString(),
     };
     expect(HarvestSnapshotSchema.parse(valid)).toBeDefined();
 

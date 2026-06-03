@@ -70,7 +70,7 @@ export function registerDashboardRoutes(
     const launchEnd = new Date(todayUtc.getTime() + LAUNCH_WINDOW_DAYS * DAY_MS);
 
     const projects = await db.project.findMany({
-      include: { harvestSnapshot: true },
+      include: { harvestProjects: true },
     });
 
     const latestRags = await db.$queryRaw<LatestRiskRow[]>`
@@ -101,12 +101,20 @@ export function registerDashboardRoutes(
 
     let overBudgetCount = 0;
     for (const p of active) {
-      const snap = p.harvestSnapshot;
-      if (!snap) continue;
-      const budget = snap.budgetHours === null ? null : Number(snap.budgetHours);
-      if (budget === null || budget <= 0) continue;
-      const spent = Number(snap.spentHoursBillable) + Number(snap.spentHoursNonbillable);
-      if (spent > budget) overBudgetCount++;
+      const rows = p.harvestProjects;
+      if (!rows || rows.length === 0) continue;
+      let budgetSum = 0;
+      let budgetCount = 0;
+      let spentSum = 0;
+      for (const row of rows) {
+        const budget = row.budgetHours === null ? null : Number(row.budgetHours);
+        if (budget !== null && !Number.isNaN(budget)) {
+          budgetSum += budget;
+          budgetCount++;
+        }
+        spentSum += Number(row.spentHoursBillable) + Number(row.spentHoursNonbillable);
+      }
+      if (budgetCount > 0 && budgetSum > 0 && spentSum > budgetSum) overBudgetCount++;
     }
 
     let launchingSoonCount = 0;
@@ -158,14 +166,21 @@ export function registerDashboardRoutes(
       const latest = latestByProject.get(p.id);
       const rag: RagLevel | null =
         latest && latest.rag_level !== 'Green' ? latest.rag_level : null;
-      const snap = p.harvestSnapshot;
+      const rows = p.harvestProjects;
       let overBudget = false;
-      if (snap) {
-        const budget = snap.budgetHours === null ? null : Number(snap.budgetHours);
-        if (budget !== null && budget > 0) {
-          const spent = Number(snap.spentHoursBillable) + Number(snap.spentHoursNonbillable);
-          if (spent > budget) overBudget = true;
+      if (rows && rows.length > 0) {
+        let budgetSum = 0;
+        let budgetCount = 0;
+        let spentSum = 0;
+        for (const row of rows) {
+          const budget = row.budgetHours === null ? null : Number(row.budgetHours);
+          if (budget !== null && !Number.isNaN(budget)) {
+            budgetSum += budget;
+            budgetCount++;
+          }
+          spentSum += Number(row.spentHoursBillable) + Number(row.spentHoursNonbillable);
         }
+        if (budgetCount > 0 && budgetSum > 0 && spentSum > budgetSum) overBudget = true;
       }
       schedulePressure.push({
         projectId: p.id,

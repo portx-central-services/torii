@@ -35,13 +35,13 @@ export function ProjectDetailPage() {
     enabled: !!id,
   });
 
-  // Fetch the Harvest snapshot at the parent so both <OnBudgetChip> and <HarvestPanel>
-  // can read it from the same cache key. retry:false so a 404 (not yet refreshed) stays
-  // a 404 instead of bouncing.
+  // Fetch the multi-Harvest-project snapshot at the parent so both <OnBudgetChip>
+  // and <HarvestPanel> can read it from the same cache key. retry:false keeps an
+  // empty result distinct from a transient error.
   const harvestSnapQ = useQuery({
     queryKey: ['harvest-snapshot', id],
-    queryFn: () => endpoints.getHarvestSnapshot(id),
-    enabled: !!id && !!query.data?.harvestProjectId,
+    queryFn: () => endpoints.getProjectHarvest(id),
+    enabled: !!id,
     retry: false,
   });
 
@@ -82,13 +82,15 @@ export function ProjectDetailPage() {
               <span className="status-chip-label">State</span>
               <StateBadge state={project.state} />
             </div>
-            {harvestSnapQ.data && (
+            {harvestSnapQ.data && harvestSnapQ.data.harvestProjects.length > 0 && (
               <div className="status-chip">
                 <span className="status-chip-label">Budget</span>
                 <OnBudgetChip
-                  budgetHours={harvestSnapQ.data.budgetHours}
-                  spentBillable={harvestSnapQ.data.spentHoursBillable}
-                  spentNonbillable={harvestSnapQ.data.spentHoursNonbillable}
+                  budgetHours={harvestSnapQ.data.harvestProjects.some((hp) => hp.budgetHours !== null)
+                    ? harvestSnapQ.data.harvestProjects.reduce((s, hp) => s + (hp.budgetHours ?? 0), 0)
+                    : null}
+                  spentBillable={harvestSnapQ.data.harvestProjects.reduce((s, hp) => s + hp.spentHoursBillable, 0)}
+                  spentNonbillable={harvestSnapQ.data.harvestProjects.reduce((s, hp) => s + hp.spentHoursNonbillable, 0)}
                 />
               </div>
             )}
@@ -106,6 +108,18 @@ export function ProjectDetailPage() {
         </ol>
 
         <div className="detail-hero-team">
+          <div className="team-row">
+            <span className="team-row-label">Customer</span>
+            <span className="team-row-value">
+              {project.customer ? (
+                <Link to={`/customers/${project.customer.id}`} className="text-torii hover:underline">
+                  {project.customer.name}
+                </Link>
+              ) : (
+                '—'
+              )}
+            </span>
+          </div>
           {teamFields.map((field) => {
             // Prefer the resolved Person (linked to /people/:id); fall back to the
             // legacy `details.*` string when the FK is null; fall back to em-dash.
@@ -188,9 +202,7 @@ export function ProjectDetailPage() {
         <MondayDetailsPanel trackerRaw={project.trackerRaw} />
       )}
 
-      {project.harvestProjectId && (
-        <HarvestPanel project={project} isPm={isPM} />
-      )}
+      <HarvestPanel project={project} isPm={isPM} />
 
       <div className="detail-sync-footer">
         <div className="detail-sync-meta">

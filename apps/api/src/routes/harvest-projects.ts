@@ -2,31 +2,24 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { Prisma, TrackerProvider, TrackerConnectionStatus } from '@prisma/client';
 import {
-  HarvestSnapshotSchema,
+  HarvestProjectSnapshotSchema,
   NotFoundError,
   ValidationError,
-  type HarvestSnapshot,
+  type HarvestProjectSnapshot,
 } from '@torii/shared';
 import type { DB } from '../db.js';
 import type { Env } from '../env.js';
-import { requireAdmin, requirePM, requireUser } from '../plugins/guards.js';
+import { requirePM, requireUser } from '../plugins/guards.js';
 import { decryptToken, encryptToken } from '../sync/encryption.js';
 import { HarvestAdapter, HarvestAuthError, HarvestRateLimitError } from '../sync/harvest/HarvestAdapter.js';
 
 const idParams = z.object({ id: z.string().min(1) });
-const linkBody = z.object({ harvestProjectId: z.string().min(1) });
 
 interface RegisterHarvestProjectsOptions {
   db: DB;
   env: Env;
 }
 
-/**
- * Resolve the active Harvest connection, decrypt credentials, and return a constructed
- * HarvestAdapter. Throws ValidationError(404) when no connection exists.
- *
- * The returned `connectionId` is needed for token-refresh on auth failure.
- */
 interface HarvestContext {
   connectionId: string;
   workspace: string;
@@ -48,11 +41,6 @@ async function resolveHarvestContext(db: DB): Promise<HarvestContext> {
   return { connectionId: conn.id, workspace: conn.workspace, accountId: conn.harvestAccountId };
 }
 
-/**
- * Run a Harvest adapter call, retrying with a freshly refreshed access token if the
- * first attempt fails with `HarvestAuthError`. Surfaces rate-limit errors unchanged
- * so the route can map them to 429.
- */
 async function withHarvestRetry<T>(
   db: DB,
   env: Env,
@@ -73,10 +61,6 @@ async function withHarvestRetry<T>(
   }
 }
 
-/**
- * Inline version of the helper from tracker.ts. Duplicated here to keep the file
- * self-contained; both call sites use the same encryption key.
- */
 async function refreshHarvestAccessTokenInline(
   db: DB,
   env: Env,
@@ -120,157 +104,127 @@ async function refreshHarvestAccessTokenInline(
   return token.access_token;
 }
 
+type HarvestProjectRow = {
+  id: string;
+  name: string;
+  customerId: string;
+  projectId: string | null;
+  isBillable: boolean;
+  harvestProjectUrl: string;
+  budgetHours: Prisma.Decimal | null;
+  spentHoursBillable: Prisma.Decimal;
+  spentHoursNonbillable: Prisma.Decimal;
+  breakdown: unknown;
+  fetchedAt: Date;
+};
+
+function serializeHarvestProjectRow(row: HarvestProjectRow): HarvestProjectSnapshot {
+  return HarvestProjectSnapshotSchema.parse({
+    id: row.id,
+    name: row.name,
+    customerId: row.customerId,
+    projectId: row.projectId,
+    isBillable: row.isBillable,
+    harvestProjectUrl: row.harvestProjectUrl,
+    budgetHours: row.budgetHours === null ? null : Number(row.budgetHours),
+    spentHoursBillable: Number(row.spentHoursBillable),
+    spentHoursNonbillable: Number(row.spentHoursNonbillable),
+    breakdown: row.breakdown as HarvestProjectSnapshot['breakdown'],
+    fetchedAt: row.fetchedAt.toISOString(),
+  });
+}
+
+/**
+ * Sort pinned-billable first, then by name. The HarvestPanel renders in this order.
+ */
+function harvestProjectSortKey(a: HarvestProjectSnapshot, b: HarvestProjectSnapshot): number {
+  if (a.isBillable !== b.isBillable) return a.isBillable ? -1 : 1;
+  return a.name.localeCompare(b.name);
+}
+
 export function registerHarvestProjectsRoutes(
   app: FastifyInstance,
   opts: RegisterHarvestProjectsOptions,
 ): void {
   const { db, env } = opts;
 
-  // POST /api/projects/:id/harvest/link - admin only
-  app.post('/api/projects/:id/harvest/link', async (request, reply) => {
-    requireAdmin(request);
-    const { id } = idParams.parse(request.params);
-    const { harvestProjectId } = linkBody.parse(request.body);
-
-    const project = await db.project.findUnique({ where: { id } });
-    if (!project) throw new NotFoundError('Project not found');
-
-    // Reject when the same Harvest project is already linked to a different Torii project.
-    const conflict = await db.project.findFirst({
-      where: { harvestProjectId, id: { not: id } },
-    });
-    if (conflict) {
-      throw new ValidationError(
-        `Harvest project ${harvestProjectId} is already linked to another Torii project`,
-      );
-    }
-
-    // Validate the Harvest project exists by calling getProject().
-    const ctx = await resolveHarvestContext(db);
-    let external;
-    try {
-      external = await withHarvestRetry(db, env, ctx, (a) => a.getProject(harvestProjectId));
-    } catch (err) {
-      if (err instanceof HarvestRateLimitError) {
-        reply.code(429);
-        return { error: 'Harvest rate-limited; retry in 15s' };
-      }
-      throw err;
-    }
-    if (!external) {
-      throw new ValidationError(`Harvest project ${harvestProjectId} not found`);
-    }
-
-    await db.project.update({
-      where: { id },
-      data: { harvestProjectId },
-    });
-    return { ok: true };
-  });
-
-  // DELETE /api/projects/:id/harvest/link - admin only
-  app.delete('/api/projects/:id/harvest/link', async (request, reply) => {
-    requireAdmin(request);
-    const { id } = idParams.parse(request.params);
-
-    const project = await db.project.findUnique({ where: { id } });
-    if (!project) throw new NotFoundError('Project not found');
-
-    await db.$transaction(async (tx) => {
-      await tx.projectHarvestSnapshot.deleteMany({ where: { projectId: id } });
-      await tx.project.update({ where: { id }, data: { harvestProjectId: null } });
-    });
-    reply.code(204);
-    return null;
-  });
-
-  // POST /api/projects/:id/harvest/refresh - PM or higher
-  app.post('/api/projects/:id/harvest/refresh', async (request, reply) => {
-    requirePM(request);
-    const { id } = idParams.parse(request.params);
-
-    const project = await db.project.findUnique({ where: { id } });
-    if (!project) throw new NotFoundError('Project not found');
-    if (!project.harvestProjectId) {
-      throw new NotFoundError('Project is not linked to a Harvest project');
-    }
-
-    const ctx = await resolveHarvestContext(db);
-    let result;
-    try {
-      result = await withHarvestRetry(db, env, ctx, (a) =>
-        a.getProjectSnapshot(project.harvestProjectId!),
-      );
-    } catch (err) {
-      if (err instanceof HarvestRateLimitError) {
-        reply.code(429);
-        return { error: 'Harvest rate-limited; retry in 15s' };
-      }
-      throw err;
-    }
-
-    const projected: HarvestSnapshot = {
-      ...result.snapshot,
-      projectId: id,
-    };
-
-    await db.projectHarvestSnapshot.upsert({
-      where: { projectId: id },
-      update: {
-        fetchedAt: new Date(projected.fetchedAt),
-        budgetHours: projected.budgetHours === null ? null : new Prisma.Decimal(projected.budgetHours),
-        spentHoursBillable: new Prisma.Decimal(projected.spentHoursBillable),
-        spentHoursNonbillable: new Prisma.Decimal(projected.spentHoursNonbillable),
-        breakdown: projected.breakdown as Prisma.InputJsonValue,
-        raw: (result.raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-      },
-      create: {
-        projectId: id,
-        fetchedAt: new Date(projected.fetchedAt),
-        budgetHours: projected.budgetHours === null ? null : new Prisma.Decimal(projected.budgetHours),
-        spentHoursBillable: new Prisma.Decimal(projected.spentHoursBillable),
-        spentHoursNonbillable: new Prisma.Decimal(projected.spentHoursNonbillable),
-        breakdown: projected.breakdown as Prisma.InputJsonValue,
-        raw: (result.raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-      },
-    });
-
-    return projected;
-  });
-
-  // GET /api/projects/:id/harvest - any authenticated user
+  /**
+   * Read every pinned Harvest project for the given Torii project.
+   * Returns an empty array (not 404) when no Harvest projects are pinned — callers
+   * use the empty result to show the panel's empty state.
+   */
   app.get('/api/projects/:id/harvest', async (request) => {
     requireUser(request);
     const { id } = idParams.parse(request.params);
 
     const project = await db.project.findUnique({ where: { id } });
     if (!project) throw new NotFoundError('Project not found');
-    if (!project.harvestProjectId) {
-      throw new NotFoundError('Project is not linked to a Harvest project');
+
+    const rows = await db.harvestProject.findMany({ where: { projectId: id } });
+    const harvestProjects = rows.map(serializeHarvestProjectRow).sort(harvestProjectSortKey);
+    return { harvestProjects };
+  });
+
+  /**
+   * Refresh every Harvest project pinned to this Torii project, in parallel.
+   * PM or higher. Returns the refreshed array, same shape as GET.
+   */
+  app.post('/api/projects/:id/harvest/refresh', async (request, reply) => {
+    requirePM(request);
+    const { id } = idParams.parse(request.params);
+
+    const project = await db.project.findUnique({ where: { id } });
+    if (!project) throw new NotFoundError('Project not found');
+
+    const pinned = await db.harvestProject.findMany({ where: { projectId: id } });
+    if (pinned.length === 0) {
+      return { harvestProjects: [] };
     }
 
-    const row = await db.projectHarvestSnapshot.findUnique({ where: { projectId: id } });
-    if (!row) {
-      throw new NotFoundError('Snapshot not yet fetched — refresh first');
+    const ctx = await resolveHarvestContext(db);
+
+    // Fetch the project-budget report ONCE (it returns every active project's row)
+    // and pass each project's pre-fetched row into `getProjectSnapshot`. Without
+    // this, parallel refresh of 5 pinned Harvest projects = 5 full report scans,
+    // which is the same rate-limit trap as the sync engine.
+    //
+    // Refresh sequentially to keep total request volume polite — parallel
+    // `getProjectSnapshot` calls would still bunch time-entry page fetches.
+    let refreshed: string[];
+    try {
+      const budgetReportMap = await withHarvestRetry(db, env, ctx, (a) =>
+        a.listBudgetReportByProjectId(),
+      );
+      refreshed = [];
+      for (const hp of pinned) {
+        const result = await withHarvestRetry(db, env, ctx, (a) =>
+          a.getProjectSnapshot(hp.id, budgetReportMap.get(hp.id) ?? null),
+        );
+        await db.harvestProject.update({
+          where: { id: hp.id },
+          data: {
+            fetchedAt: new Date(result.snapshot.fetchedAt),
+            budgetHours:
+              result.snapshot.budgetHours === null ? null : new Prisma.Decimal(result.snapshot.budgetHours),
+            spentHoursBillable: new Prisma.Decimal(result.snapshot.spentHoursBillable),
+            spentHoursNonbillable: new Prisma.Decimal(result.snapshot.spentHoursNonbillable),
+            breakdown: result.snapshot.breakdown as Prisma.InputJsonValue,
+            harvestProjectUrl: result.snapshot.harvestProjectUrl,
+            raw: (result.raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          },
+        });
+        refreshed.push(hp.id);
+      }
+    } catch (err) {
+      if (err instanceof HarvestRateLimitError) {
+        reply.code(429);
+        return { error: 'Harvest rate-limited; retry in 15s' };
+      }
+      throw err;
     }
 
-    // Pull the workspace from the connection so we can build the Harvest project URL.
-    const conn = await db.trackerConnection.findFirst({
-      where: { provider: TrackerProvider.harvest },
-      orderBy: { lastSyncedAt: 'desc' },
-    });
-    const workspace = conn?.workspace ?? 'app';
-
-    const snapshot: HarvestSnapshot = HarvestSnapshotSchema.parse({
-      projectId: id,
-      fetchedAt: row.fetchedAt.toISOString(),
-      harvestProjectId: project.harvestProjectId,
-      harvestProjectUrl: `https://${workspace}.harvestapp.com/projects/${project.harvestProjectId}`,
-      budgetHours: row.budgetHours === null ? null : Number(row.budgetHours),
-      spentHoursBillable: Number(row.spentHoursBillable),
-      spentHoursNonbillable: Number(row.spentHoursNonbillable),
-      breakdown: row.breakdown as HarvestSnapshot['breakdown'],
-    });
-    return snapshot;
+    const updatedRows = await db.harvestProject.findMany({ where: { id: { in: refreshed } } });
+    const harvestProjects = updatedRows.map(serializeHarvestProjectRow).sort(harvestProjectSortKey);
+    return { harvestProjects };
   });
 }

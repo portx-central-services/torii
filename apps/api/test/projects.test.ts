@@ -68,7 +68,7 @@ describe('projects routes', () => {
       expect(db.project.findMany).toHaveBeenCalledWith({
         where: {},
         orderBy: { name: 'asc' },
-        include: { harvestSnapshot: true, projectManager: true, solutionArchitect: true, solutionConsultant: true },
+        include: { customer: true, harvestProjects: true, projectManager: true, solutionArchitect: true, solutionConsultant: true },
       });
     });
 
@@ -98,7 +98,7 @@ describe('projects routes', () => {
       expect(db.project.findMany).toHaveBeenCalledWith({
         where: { phase: 'Development', state: 'Blocked' },
         orderBy: { name: 'asc' },
-        include: { harvestSnapshot: true, projectManager: true, solutionArchitect: true, solutionConsultant: true },
+        include: { customer: true, harvestProjects: true, projectManager: true, solutionArchitect: true, solutionConsultant: true },
       });
     });
 
@@ -340,7 +340,12 @@ describe('projects routes', () => {
 
   describe('derived overBudget', () => {
     function projectWith(snapshot: Record<string, unknown> | null) {
-      return { ...baseProject(), harvestSnapshot: snapshot };
+      // The new model rolls up budget/spent across an array of HarvestProject rows.
+      // For tests, we pass the same single-snapshot data shape via a one-element array.
+      return {
+        ...baseProject(),
+        harvestProjects: snapshot === null ? [] : [snapshot],
+      };
     }
 
     it('overBudget is true when spent > budget (Abrigo example)', async () => {

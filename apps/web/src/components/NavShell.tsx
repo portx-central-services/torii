@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider.js';
+import { TopbarSearch } from './TopbarSearch.js';
 import toriiLogo from '../assets/torii-logo.svg';
 
 export function NavShell() {
@@ -11,15 +12,23 @@ export function NavShell() {
       ? 'Dashboard'
       : location.pathname.startsWith('/projects/')
         ? 'Project detail'
-        : location.pathname === '/capacity'
-          ? 'Team capacity'
-          : location.pathname === '/risks'
-            ? 'Risks'
-            : location.pathname === '/timeline'
-              ? 'Timeline'
-              : location.pathname === '/trackers'
-                ? 'Trackers'
-                : 'Projects';
+        : location.pathname === '/people'
+          ? 'People'
+          : location.pathname.startsWith('/people/')
+            ? 'Person detail'
+            : location.pathname === '/customers'
+          ? 'Customers'
+          : location.pathname.startsWith('/customers/')
+            ? 'Customer detail'
+            : location.pathname === '/capacity'
+              ? 'Team capacity'
+              : location.pathname === '/risks'
+                ? 'Risks'
+                : location.pathname === '/timeline'
+                  ? 'Timeline'
+                  : location.pathname === '/trackers'
+                    ? 'Trackers'
+                    : 'Projects';
 
   return (
     <div className="app-shell">
@@ -49,10 +58,22 @@ export function NavShell() {
             Risks
           </NavLink>
           <NavLink
+            to="/customers"
+            className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
+          >
+            Customers
+          </NavLink>
+          <NavLink
             to="/projects"
             className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
           >
             Projects
+          </NavLink>
+          <NavLink
+            to="/people"
+            className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
+          >
+            People
           </NavLink>
           <NavLink
             to="/capacity"
@@ -96,10 +117,7 @@ export function NavShell() {
             <span className="crumb-sep">/</span>
             <span className="crumb-current">{crumbLabel}</span>
           </div>
-          <label className="topbar-search">
-            <span>Search</span>
-            <input placeholder="Projects, customers, people" />
-          </label>
+          <TopbarSearch />
           <div className="topbar-actions">
             <NavLink to="/projects" className="btn-secondary">
               Portfolio

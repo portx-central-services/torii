@@ -17,11 +17,6 @@ import { requireUser, requirePM } from '../plugins/guards.js';
 
 const idParams = z.object({ id: z.string().min(1) });
 
-/**
- * Optional shape of the joined Harvest snapshot. `serializeProject` accepts
- * `Project & { harvestSnapshot?: ... }` so callers can include the relation when
- * they want a populated `overBudget`; without it, `overBudget` is always false.
- */
 type JoinedPerson = {
   id: string;
   name: string;
@@ -31,19 +26,31 @@ type JoinedPerson = {
   isAdmin: boolean;
 };
 
-type ProjectWithHarvest = Project & {
-  harvestSnapshot?: {
-    budgetHours: { toString(): string } | number | null;
-    spentHoursBillable: { toString(): string } | number;
-    spentHoursNonbillable: { toString(): string } | number;
-  } | null;
-  /** Optional joined Person rows for the three role FKs. Null when FK is null. */
+type JoinedCustomer = {
+  id: string;
+  name: string;
+};
+
+/** Hours-shaped subset of a `HarvestProject` row; only what we need for aggregation. */
+type JoinedHarvestProject = {
+  budgetHours: { toString(): string } | number | null;
+  spentHoursBillable: { toString(): string } | number;
+  spentHoursNonbillable: { toString(): string } | number;
+};
+
+/**
+ * `serializeProject` accepts `Project & { customer?, harvestProjects?, ...roles? }`.
+ * Pass `customer: true` and `harvestProjects: true` in the Prisma `include` to populate
+ * the customer block and the aggregated overBudget/budgetHours/spentHours.
+ */
+type ProjectWithRelations = Project & {
+  customer?: JoinedCustomer | null;
+  harvestProjects?: JoinedHarvestProject[] | null;
   projectManager?: JoinedPerson | null;
   solutionArchitect?: JoinedPerson | null;
   solutionConsultant?: JoinedPerson | null;
 };
 
-/** Coerce a joined Person row (or null/undefined) to the API output shape. */
 function personOut(p: JoinedPerson | null | undefined) {
   if (!p) return null;
   return {
@@ -56,27 +63,43 @@ function personOut(p: JoinedPerson | null | undefined) {
   };
 }
 
-function deriveOverBudget(p: ProjectWithHarvest): boolean {
-  const snap = p.harvestSnapshot;
-  if (!snap) return false;
-  const budget = snap.budgetHours === null ? null : Number(snap.budgetHours);
-  if (budget === null || budget <= 0 || Number.isNaN(budget)) return false;
-  const spent = Number(snap.spentHoursBillable) + Number(snap.spentHoursNonbillable);
-  return spent > budget;
-}
-
-function snapshotHours(p: ProjectWithHarvest): { budgetHours: number | null; spentHours: number | null } {
-  const snap = p.harvestSnapshot;
-  if (!snap) return { budgetHours: null, spentHours: null };
+/**
+ * Roll up budget + spent hours across every pinned Harvest project for this Torii
+ * project. Returns null for both when no pinned rows exist (caller distinguishes
+ * "no Harvest linkage" from "linked but no budget").
+ */
+function aggregateHarvestHours(rows: JoinedHarvestProject[] | null | undefined): {
+  budgetHours: number | null;
+  spentHours: number | null;
+} {
+  if (!rows || rows.length === 0) return { budgetHours: null, spentHours: null };
+  let budgetSum = 0;
+  let budgetCount = 0;
+  let spentSum = 0;
+  for (const row of rows) {
+    const budget = row.budgetHours === null ? null : Number(row.budgetHours);
+    if (budget !== null && !Number.isNaN(budget)) {
+      budgetSum += budget;
+      budgetCount++;
+    }
+    spentSum += Number(row.spentHoursBillable) + Number(row.spentHoursNonbillable);
+  }
   return {
-    budgetHours: snap.budgetHours === null ? null : Number(snap.budgetHours),
-    spentHours: Number(snap.spentHoursBillable) + Number(snap.spentHoursNonbillable),
+    budgetHours: budgetCount > 0 ? budgetSum : null,
+    spentHours: spentSum,
   };
 }
 
-export function serializeProject(p: ProjectWithHarvest) {
+function deriveOverBudget(rows: JoinedHarvestProject[] | null | undefined): boolean {
+  const { budgetHours, spentHours } = aggregateHarvestHours(rows);
+  if (budgetHours === null || budgetHours <= 0) return false;
+  if (spentHours === null) return false;
+  return spentHours > budgetHours;
+}
+
+export function serializeProject(p: ProjectWithRelations) {
   const details = (p.details ?? {}) as ProjectDetails;
-  const hours = snapshotHours(p);
+  const hours = aggregateHarvestHours(p.harvestProjects);
   return {
     id: p.id,
     name: p.name,
@@ -86,13 +109,15 @@ export function serializeProject(p: ProjectWithHarvest) {
     details,
     /** Derived from `details.fintech_parent`; not a persisted column. */
     projectType: deriveProjectType(details as Record<string, unknown>),
-    /** Derived from the joined Harvest snapshot (hours-only). False without a snapshot. */
-    overBudget: deriveOverBudget(p),
-    /** Harvest project ID when linked; null otherwise. */
-    harvestProjectId: p.harvestProjectId ?? null,
-    /** Budget hours from the cached snapshot. Null when no snapshot or no budget set. */
+    /** Customer FK. Null when not yet mapped. */
+    customerId: p.customerId ?? null,
+    /** Resolved customer row. Null when the FK is unset or the relation was not included. */
+    customer: p.customer ? { id: p.customer.id, name: p.customer.name } : null,
+    /** Derived from the customer's pinned Harvest projects (sum of spent > sum of budget). */
+    overBudget: deriveOverBudget(p.harvestProjects),
+    /** Sum of budget hours across pinned Harvest projects; null when no pinned row has a budget. */
     budgetHours: hours.budgetHours,
-    /** Total spent hours (billable + non-billable). Null when no snapshot. */
+    /** Sum of (billable + non-billable) spent hours across pinned Harvest projects; null when no pinned rows. */
     spentHours: hours.spentHours,
     ownerId: p.ownerId,
     /** Resolved Person rows for the three role FKs. Null when the FK is unset
@@ -138,7 +163,8 @@ export function registerProjectRoutes(
       where,
       orderBy,
       include: {
-        harvestSnapshot: true,
+        customer: true,
+        harvestProjects: true,
         projectManager: true,
         solutionArchitect: true,
         solutionConsultant: true,
@@ -155,7 +181,8 @@ export function registerProjectRoutes(
       where: { id },
       include: {
         allocations: true,
-        harvestSnapshot: true,
+        customer: true,
+        harvestProjects: true,
         projectManager: true,
         solutionArchitect: true,
         solutionConsultant: true,

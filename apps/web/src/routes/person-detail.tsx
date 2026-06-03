@@ -8,6 +8,8 @@ import {
   type Project,
 } from '../api/endpoints.js';
 import { PhaseBadge, StateBadge } from '../components/Badge.js';
+import { WorkloadSection } from '../components/WorkloadSection.js';
+import { useAuth } from '../auth/AuthProvider.js';
 
 type RoleSlug = 'owner' | 'pm' | 'sa' | 'sc';
 
@@ -20,6 +22,7 @@ const ROLE_SECTIONS: Array<{ role: RoleSlug; label: string }> = [
 
 export function PersonDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const { user: viewer } = useAuth();
 
   const personQ = useQuery({
     queryKey: ['person', id],
@@ -48,9 +51,12 @@ export function PersonDetailPage() {
     byRole.get(role)!.push(project);
   }
 
+  const canEditWorkload = Boolean(viewer && (viewer.id === person.id || viewer.isAdmin));
+
   return (
     <div className="page-stack">
       <PersonHeader person={person} />
+      <WorkloadSection personId={person.id} editable={canEditWorkload} />
       {ROLE_SECTIONS.map(({ role, label }) => (
         <RoleSection key={role} label={label} projects={byRole.get(role) ?? []} />
       ))}

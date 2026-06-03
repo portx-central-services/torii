@@ -1,6 +1,7 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { endpoints, type TrackerConnection } from '../api/endpoints.js';
+import { endpoints, type Project, type TrackerConnection } from '../api/endpoints.js';
 import { ApiError } from '../api/client.js';
 
 export function TrackersPage() {
@@ -80,7 +81,8 @@ export function TrackersPage() {
 
       {connections.some((c) => c.provider === 'harvest' && c.status !== 'auth_failed') && (
         <>
-          <HarvestLinkTable />
+          <HarvestClientLinkTable />
+          <HarvestProjectPinTable />
           <HarvestUserLinkTable />
         </>
       )}
@@ -232,11 +234,140 @@ function ImportPanel({ connectionId }: { connectionId: string }) {
 }
 
 /**
- * Bulk-link UI for Harvest. Lists every Harvest project from the active connection;
- * each row has a dropdown to pick which Torii project to link to. Submits each
- * selection independently so partial saves are visible.
+ * Step 1 — Customer linking. Lists every Harvest client; each row picks (or creates)
+ * a Torii customer to bind it to. This populates `customers.harvest_client_id`,
+ * the authoritative cross-system anchor.
  */
-function HarvestLinkTable() {
+function HarvestClientLinkTable() {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<Set<string>>(new Set());
+
+  const clientsQ = useQuery({
+    queryKey: ['harvest-clients'],
+    queryFn: () => endpoints.listHarvestClients(),
+  });
+  const customersQ = useQuery({
+    queryKey: ['customers'],
+    queryFn: () => endpoints.listCustomers(),
+  });
+
+  const linkMutation = useMutation({
+    mutationFn: async ({ customerId, harvestClientId }: { customerId: string; harvestClientId: string }) =>
+      endpoints.linkCustomerToHarvestClient(customerId, harvestClientId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['harvest-clients'] });
+      await queryClient.invalidateQueries({ queryKey: ['customers'] });
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Link failed'),
+  });
+
+  if (clientsQ.isLoading) return <div className="empty">Loading Harvest clients…</div>;
+  if (clientsQ.isError) {
+    return (
+      <div className="empty text-red-700">
+        Unable to load Harvest clients: {(clientsQ.error as Error).message}
+      </div>
+    );
+  }
+
+  const clients = (clientsQ.data ?? [])
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  const customers = customersQ.data ?? [];
+
+  function handleRebind(harvestClientId: string, customerId: string) {
+    if (!customerId) return;
+    setError(null);
+    setPending((s) => new Set(s).add(harvestClientId));
+    linkMutation.mutate(
+      { customerId, harvestClientId },
+      {
+        onSettled: () =>
+          setPending((s) => {
+            const next = new Set(s);
+            next.delete(harvestClientId);
+            return next;
+          }),
+      },
+    );
+  }
+
+  return (
+    <div className="section-card" style={{ padding: 16 }}>
+      <h3 style={{ marginTop: 0 }}>Step 1 — Harvest clients ↔ Torii customers</h3>
+      <div className="text-sm" style={{ color: 'var(--ink-500)', marginBottom: 12 }}>
+        Every Harvest client is auto-linked to a Torii customer on first sync. Use the rebind action only when
+        consolidating two Harvest clients into one Torii customer.
+      </div>
+      {error && <div className="text-red-700" style={{ marginBottom: 8 }}>{error}</div>}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--ink-200)' }}>
+              <th style={{ padding: '8px 4px' }}>Harvest client</th>
+              <th style={{ padding: '8px 4px' }}>ID</th>
+              <th style={{ padding: '8px 4px' }}>Torii customer</th>
+            </tr>
+          </thead>
+          <tbody>
+            {clients.map((c) => {
+              const rebindTargets = customers.filter(
+                (cust) => cust.id !== c.linkedToiriCustomerId,
+              );
+              return (
+                <tr key={c.harvestClientId} style={{ borderBottom: '1px solid var(--ink-100)' }}>
+                  <td style={{ padding: '6px 4px', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {c.name}
+                  </td>
+                  <td style={{ padding: '6px 4px', fontFamily: 'monospace', fontSize: 11, color: 'var(--ink-500)' }}>
+                    {c.harvestClientId}
+                  </td>
+                  <td style={{ padding: '6px 4px' }}>
+                    {c.linkedToiriCustomerId ? (
+                      <span className="text-sm">
+                        <Link to={`/customers/${c.linkedToiriCustomerId}`} className="text-torii hover:underline">
+                          {c.linkedToiriCustomerName ?? c.linkedToiriCustomerId}
+                        </Link>
+                      </span>
+                    ) : (
+                      <span className="text-sm" style={{ color: 'var(--ink-500)' }}>
+                        Awaiting next sync…
+                      </span>
+                    )}
+                    {c.linkedToiriCustomerId && rebindTargets.length > 0 && (
+                      <select
+                        className="input"
+                        defaultValue=""
+                        disabled={pending.has(c.harvestClientId)}
+                        onChange={(e) => handleRebind(c.harvestClientId, e.target.value)}
+                        style={{ marginLeft: 8 }}
+                      >
+                        <option value="">Rebind…</option>
+                        {rebindTargets.map((cust) => (
+                          <option key={cust.id} value={cust.id}>
+                            {cust.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Step 2 — Pin Harvest projects to Torii projects (optional). Lists every Harvest
+ * project whose customer is linked but `project_id` is unset. Each row picks a Torii
+ * project under the same customer (or leaves it at the customer level for support work).
+ */
+function HarvestProjectPinTable() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Set<string>>(new Set());
@@ -246,40 +377,40 @@ function HarvestLinkTable() {
     queryFn: () => endpoints.listHarvestProjects(),
   });
   const projectsQ = useQuery({
-    queryKey: ['projects', 'harvest-link-table'],
+    queryKey: ['projects', 'harvest-pin-table'],
     queryFn: () => endpoints.listProjects({}),
   });
 
-  const linkMutation = useMutation({
-    mutationFn: async ({ toiriProjectId, harvestProjectId }: { toiriProjectId: string; harvestProjectId: string }) => {
-      return endpoints.linkHarvestProject(toiriProjectId, harvestProjectId);
-    },
+  const pinMutation = useMutation({
+    mutationFn: ({ harvestProjectId, toriiProjectId }: { harvestProjectId: string; toriiProjectId: string }) =>
+      endpoints.pinHarvestProject(harvestProjectId, toriiProjectId),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['harvest-projects'] });
-      await queryClient.invalidateQueries({ queryKey: ['projects'] });
+      await queryClient.invalidateQueries({ queryKey: ['customers'] });
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Link failed'),
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Pin failed'),
   });
 
-  if (harvestQ.isLoading) return <div className="empty">Loading Harvest projects...</div>;
+  if (harvestQ.isLoading) return <div className="empty">Loading Harvest projects…</div>;
   if (harvestQ.isError) {
-    return <div className="empty text-red-700">Unable to load Harvest projects: {(harvestQ.error as Error).message}</div>;
+    return (
+      <div className="empty text-red-700">
+        Unable to load Harvest projects: {(harvestQ.error as Error).message}
+      </div>
+    );
   }
 
-  // Sort alphabetically (case-insensitive) before render. Harvest's API returns
-  // projects in its own ordering; the link picker is much easier to scan when
-  // it's alphabetical.
   const harvestProjects = (harvestQ.data ?? [])
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
   const toiriProjects = projectsQ.data ?? [];
 
-  function handleSelect(harvestProjectId: string, toiriProjectId: string) {
-    if (!toiriProjectId) return;
+  function handleSelect(harvestProjectId: string, toriiProjectId: string) {
+    if (!toriiProjectId) return;
     setError(null);
     setPending((s) => new Set(s).add(harvestProjectId));
-    linkMutation.mutate(
-      { toiriProjectId, harvestProjectId },
+    pinMutation.mutate(
+      { harvestProjectId, toriiProjectId },
       {
         onSettled: () =>
           setPending((s) => {
@@ -293,9 +424,10 @@ function HarvestLinkTable() {
 
   return (
     <div className="section-card" style={{ padding: 16 }}>
-      <h3 style={{ marginTop: 0 }}>Link Harvest projects</h3>
+      <h3 style={{ marginTop: 0 }}>Step 2 — Pin Harvest projects to Monday projects (optional)</h3>
       <div className="text-sm" style={{ color: 'var(--ink-500)', marginBottom: 12 }}>
-        Pick the Torii project that matches each Harvest project. Already-linked rows show their current link.
+        For Harvest projects that bill against one specific Monday delivery (typically per phase), pin
+        them here. Leave others at the customer level — they'll roll up as support / customer-wide hours.
       </div>
       {error && <div className="text-red-700" style={{ marginBottom: 8 }}>{error}</div>}
       <div style={{ overflowX: 'auto' }}>
@@ -304,7 +436,7 @@ function HarvestLinkTable() {
             <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--ink-200)' }}>
               <th style={{ padding: '8px 4px' }}>Harvest project</th>
               <th style={{ padding: '8px 4px' }}>ID</th>
-              <th style={{ padding: '8px 4px' }}>Torii link</th>
+              <th style={{ padding: '8px 4px' }}>Pin to Torii project</th>
             </tr>
           </thead>
           <tbody>
@@ -318,23 +450,14 @@ function HarvestLinkTable() {
                 </td>
                 <td style={{ padding: '6px 4px' }}>
                   {hp.linkedToiriProjectId ? (
-                    <span className="text-sm">Linked to {hp.linkedToiriProjectName ?? hp.linkedToiriProjectId}</span>
+                    <span className="text-sm">Pinned to {hp.linkedToiriProjectName ?? hp.linkedToiriProjectId}</span>
                   ) : (
-                    <select
-                      className="input"
-                      defaultValue=""
+                    <PinSelect
+                      harvestName={hp.name}
+                      toiriProjects={toiriProjects}
                       disabled={pending.has(hp.harvestProjectId)}
-                      onChange={(e) => handleSelect(hp.harvestProjectId, e.target.value)}
-                    >
-                      <option value="">Skip</option>
-                      {toiriProjects
-                        .filter((p) => !p.harvestProjectId)
-                        .map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                    </select>
+                      onPick={(id) => handleSelect(hp.harvestProjectId, id)}
+                    />
                   )}
                 </td>
               </tr>
@@ -344,6 +467,67 @@ function HarvestLinkTable() {
       </div>
     </div>
   );
+}
+
+/**
+ * Dropdown for picking a Torii project to pin a Harvest project to. Surfaces
+ * "Suggested" matches at the top — projects whose first whitespace-delimited
+ * word matches the Harvest project's first word (case-insensitive). PortX's
+ * naming convention prefixes both Harvest and Monday projects with the
+ * customer's short code (e.g., "AzCCU"), so first-word matching catches the
+ * common case without any fuzzy-matching heuristics.
+ */
+function PinSelect({
+  harvestName,
+  toiriProjects,
+  disabled,
+  onPick,
+}: {
+  harvestName: string;
+  toiriProjects: Project[];
+  disabled: boolean;
+  onPick: (toiriProjectId: string) => void;
+}) {
+  const harvestFirst = firstWord(harvestName);
+  const suggested: Project[] = [];
+  const other: Project[] = [];
+  for (const p of toiriProjects) {
+    if (harvestFirst && firstWord(p.name) === harvestFirst) suggested.push(p);
+    else other.push(p);
+  }
+  return (
+    <select
+      className="input"
+      defaultValue=""
+      disabled={disabled}
+      onChange={(e) => onPick(e.target.value)}
+    >
+      <option value="">Leave at customer level</option>
+      {suggested.length > 0 && (
+        <optgroup label={`Suggested (first word: ${harvestFirst})`}>
+          {suggested.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </optgroup>
+      )}
+      <optgroup label={suggested.length > 0 ? 'All other projects' : 'All projects'}>
+        {other.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </optgroup>
+    </select>
+  );
+}
+
+function firstWord(name: string): string | null {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const match = trimmed.split(/\s+/)[0];
+  return match ? match.toLowerCase() : null;
 }
 
 /**

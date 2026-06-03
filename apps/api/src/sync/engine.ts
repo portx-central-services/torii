@@ -279,75 +279,200 @@ export class SyncEngine {
       accountId: connection.harvestAccountId,
     });
 
-    const linkedProjects = await db.project.findMany({
-      where: { harvestProjectId: { not: null } },
-    });
-
-    let patched = 0;
     let status: TrackerConnectionStatus = TrackerConnectionStatus.ok;
     let topLevelError: string | undefined;
 
-    for (let i = 0; i < linkedProjects.length; i += HARVEST_BATCH_SIZE) {
-      const batch = linkedProjects.slice(i, i + HARVEST_BATCH_SIZE);
-      for (const project of batch) {
-        if (!project.harvestProjectId) continue;
-        try {
-          const { snapshot, raw } = await adapter.getProjectSnapshot(project.harvestProjectId);
-          await db.projectHarvestSnapshot.upsert({
-            where: { projectId: project.id },
-            update: {
-              fetchedAt: new Date(snapshot.fetchedAt),
-              budgetHours: snapshot.budgetHours === null ? null : new Prisma.Decimal(snapshot.budgetHours),
-              spentHoursBillable: new Prisma.Decimal(snapshot.spentHoursBillable),
-              spentHoursNonbillable: new Prisma.Decimal(snapshot.spentHoursNonbillable),
-              breakdown: snapshot.breakdown as Prisma.InputJsonValue,
-              raw: (raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-            },
-            create: {
-              projectId: project.id,
-              fetchedAt: new Date(snapshot.fetchedAt),
-              budgetHours: snapshot.budgetHours === null ? null : new Prisma.Decimal(snapshot.budgetHours),
-              spentHoursBillable: new Prisma.Decimal(snapshot.spentHoursBillable),
-              spentHoursNonbillable: new Prisma.Decimal(snapshot.spentHoursNonbillable),
-              breakdown: snapshot.breakdown as Prisma.InputJsonValue,
-              raw: (raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-            },
-          });
-          patched += 1;
-        } catch (err) {
-          if (err instanceof HarvestAuthError) {
-            status = TrackerConnectionStatus.auth_failed;
-            topLevelError = 'Harvest auth failed; refresh credentials';
-            break;
-          }
-          if (err instanceof HarvestRateLimitError) {
-            // Per-project 429: skip this project, continue the rest of the batch.
-            console.warn('[SyncEngine.syncHarvestConnection] rate-limited on', project.harvestProjectId);
-            continue;
-          }
-          console.error('[SyncEngine.syncHarvestConnection] per-project error', {
-            projectId: project.id,
-            harvestProjectId: project.harvestProjectId,
-            err: err instanceof Error ? err.message : String(err),
+    // Step 1 — ingest Harvest clients into local Customers.
+    // Auto-create a Customer the first time we see a Harvest client (the Harvest
+    // client IS the customer; making the admin click "Create" was needless friction).
+    // Once a Customer row exists we leave its name alone — admin owns rename per D7.
+    // To merge two Harvest clients into one Torii customer, the admin rebinds via
+    // /trackers (which clears the auto-created row's harvest_client_id).
+    try {
+      const clients = await adapter.listClients();
+      for (const c of clients) {
+        const existing = await db.customer.findUnique({
+          where: { harvestClientId: c.id },
+        });
+        if (!existing) {
+          await db.customer.create({
+            data: { name: c.name, harvestClientId: c.id },
           });
         }
       }
-      if (status !== TrackerConnectionStatus.ok) break;
-      if (i + HARVEST_BATCH_SIZE < linkedProjects.length) {
-        await new Promise((resolve) => setTimeout(resolve, HARVEST_BATCH_WAIT_MS));
+    } catch (err) {
+      if (err instanceof HarvestAuthError) {
+        status = TrackerConnectionStatus.auth_failed;
+        topLevelError = 'Harvest auth failed; refresh credentials';
+      } else {
+        console.error('[SyncEngine.syncHarvestConnection] listClients', err);
       }
     }
+
+    // Step 2 — upsert harvest_projects metadata (name, is_billable, url, customer).
+    // We only insert a row when a matching Customer already exists; otherwise the
+    // project is held back until an admin maps its customer via /trackers.
+    let upsertableProjectIds: string[] = [];
+    if (status === TrackerConnectionStatus.ok) {
+      try {
+        const projects = await adapter.listHarvestProjectsWithCustomer();
+        for (const hp of projects) {
+          const customer = await db.customer.findUnique({
+            where: { harvestClientId: hp.clientId },
+          });
+          if (!customer) continue;
+          await db.harvestProject.upsert({
+            where: { id: hp.id },
+            update: {
+              name: hp.name,
+              isBillable: hp.isBillable,
+              harvestProjectUrl: hp.url,
+              customerId: customer.id,
+            },
+            create: {
+              id: hp.id,
+              name: hp.name,
+              customerId: customer.id,
+              isBillable: hp.isBillable,
+              harvestProjectUrl: hp.url,
+            },
+          });
+          upsertableProjectIds.push(hp.id);
+        }
+      } catch (err) {
+        if (err instanceof HarvestAuthError) {
+          status = TrackerConnectionStatus.auth_failed;
+          topLevelError = 'Harvest auth failed; refresh credentials';
+        } else {
+          console.error('[SyncEngine.syncHarvestConnection] listProjects', err);
+        }
+      }
+    }
+
+    // Step 3 — refresh per-project snapshots (budget, spent, breakdown) for every
+    // harvest_projects row we have, batched to be polite about rate limits.
+    //
+    // We fetch the project-budget report ONCE (Harvest's `/reports/project_budget`
+    // endpoint returns every active project's row), then pass each project's row
+    // into `getProjectSnapshot` so it doesn't re-scan the full report per project.
+    // Without this we burned through the rate limit ~N× over.
+    let patched = 0;
+    if (status === TrackerConnectionStatus.ok) {
+      let budgetReportMap: Awaited<ReturnType<HarvestAdapter['listBudgetReportByProjectId']>>;
+      try {
+        budgetReportMap = await adapter.listBudgetReportByProjectId();
+      } catch (err) {
+        if (err instanceof HarvestAuthError) {
+          status = TrackerConnectionStatus.auth_failed;
+          topLevelError = 'Harvest auth failed; refresh credentials';
+        } else {
+          console.error('[SyncEngine.syncHarvestConnection] listBudgetReport', err);
+        }
+        budgetReportMap = new Map();
+      }
+
+      // Side-channel: collect every project's time entries so the tail-of-sync
+      // 30-day aggregation can bucket by user without a second Harvest fetch.
+      const hoursByUserId = new Map<string, number>();
+      const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+      const rows = await db.harvestProject.findMany({
+        select: { id: true },
+        orderBy: { id: 'asc' },
+      });
+      for (let i = 0; i < rows.length && status === TrackerConnectionStatus.ok; i += HARVEST_BATCH_SIZE) {
+        const batch = rows.slice(i, i + HARVEST_BATCH_SIZE);
+        for (const row of batch) {
+          try {
+            const { snapshot, raw } = await adapter.getProjectSnapshot(
+              row.id,
+              budgetReportMap.get(row.id) ?? null,
+            );
+            await db.harvestProject.update({
+              where: { id: row.id },
+              data: {
+                fetchedAt: new Date(snapshot.fetchedAt),
+                budgetHours: snapshot.budgetHours === null ? null : new Prisma.Decimal(snapshot.budgetHours),
+                spentHoursBillable: new Prisma.Decimal(snapshot.spentHoursBillable),
+                spentHoursNonbillable: new Prisma.Decimal(snapshot.spentHoursNonbillable),
+                breakdown: snapshot.breakdown as Prisma.InputJsonValue,
+                harvestProjectUrl: snapshot.harvestProjectUrl,
+                raw: (raw ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+              },
+            });
+            patched += 1;
+
+            // Bucket time entries by user.id for the 30d rollup (Step 4 below).
+            const rawObj = raw as { timeEntries?: Array<{ spent_date?: string; hours?: number; user?: { id?: number } }> } | null;
+            for (const entry of rawObj?.timeEntries ?? []) {
+              const userId = entry.user?.id;
+              if (userId === undefined) continue;
+              const spent = entry.spent_date ? new Date(entry.spent_date) : null;
+              if (!spent || Number.isNaN(spent.getTime()) || spent < cutoff) continue;
+              const key = String(userId);
+              hoursByUserId.set(key, (hoursByUserId.get(key) ?? 0) + (entry.hours ?? 0));
+            }
+          } catch (err) {
+            if (err instanceof HarvestAuthError) {
+              status = TrackerConnectionStatus.auth_failed;
+              topLevelError = 'Harvest auth failed; refresh credentials';
+              break;
+            }
+            if (err instanceof HarvestRateLimitError) {
+              console.warn('[SyncEngine.syncHarvestConnection] rate-limited on', row.id);
+              continue;
+            }
+            console.error('[SyncEngine.syncHarvestConnection] per-project error', {
+              harvestProjectId: row.id,
+              err: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+        if (status !== TrackerConnectionStatus.ok) break;
+        if (i + HARVEST_BATCH_SIZE < rows.length) {
+          await new Promise((resolve) => setTimeout(resolve, HARVEST_BATCH_WAIT_MS));
+        }
+      }
+
+      // Step 4 — tail-of-sync 30-day billed-hours rollup per Person. Uses the
+      // time entries we already collected during the per-project loop; no new
+      // Harvest API calls. Errors here are logged but don't fail the sync.
+      try {
+        const linkedPeople = await db.person.findMany({
+          where: { harvestUserId: { not: null } },
+          select: { id: true, harvestUserId: true },
+        });
+        for (const person of linkedPeople) {
+          if (!person.harvestUserId) continue;
+          const total = hoursByUserId.get(person.harvestUserId) ?? 0;
+          await db.person.update({
+            where: { id: person.id },
+            data: {
+              billedHoursLast30d: new Prisma.Decimal(total.toFixed(2)),
+              billedHoursAsOf: syncedAt,
+            },
+          });
+        }
+      } catch (err) {
+        console.error('[SyncEngine.syncHarvestConnection] 30d rollup', err);
+      }
+    }
+
+    // Suppress unused-var lint when no follow-up needs `upsertableProjectIds`.
+    void upsertableProjectIds;
 
     await db.trackerConnection.update({
       where: { id: connection.id },
       data: { status, lastSyncedAt: syncedAt },
     });
 
+    const totalScanned = await db.harvestProject.count();
+
     return {
       connectionId: connection.id,
       status,
       syncedAt,
-      projectsScanned: linkedProjects.length,
+      projectsScanned: totalScanned,
       projectsPatched: patched,
       ...(topLevelError ? { error: topLevelError } : {}),
     };

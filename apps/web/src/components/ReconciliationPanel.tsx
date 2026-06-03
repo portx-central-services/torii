@@ -5,8 +5,7 @@ import {
   varianceBucket,
   type VarianceBucket,
 } from '@torii/shared';
-import { endpoints, type HarvestSnapshot, type Person } from '../api/endpoints.js';
-import { ApiError } from '../api/client.js';
+import { endpoints, type Person } from '../api/endpoints.js';
 
 /**
  * Per-project Allocations vs. Actuals reconciliation panel. Joins three data
@@ -30,7 +29,7 @@ export function ReconciliationPanel({ projectId }: { projectId: string }) {
   });
   const snapQ = useQuery({
     queryKey: ['harvest-snapshot', projectId],
-    queryFn: () => endpoints.getHarvestSnapshot(projectId),
+    queryFn: () => endpoints.getProjectHarvest(projectId),
     retry: false,
   });
 
@@ -50,27 +49,16 @@ export function ReconciliationPanel({ projectId }: { projectId: string }) {
   const allocations = project.allocations ?? [];
   const peopleById = new Map(people.map((p) => [p.id, p]));
 
-  // Snapshot may be missing (no Harvest link OR not yet refreshed) — that's a
-  // distinct render state from "no allocations".
-  const isSnapshotMissing = snapQ.isError && snapQ.error instanceof ApiError && snapQ.error.status === 404;
-  const snapshot: HarvestSnapshot | undefined = snapQ.data;
+  // Sum actuals across every pinned Harvest project's breakdown[]. Empty array
+  // when no Harvest project is pinned to this Torii project — the panel still
+  // renders allocations with "no Harvest link" chips.
+  const harvestProjects = snapQ.data?.harvestProjects ?? [];
 
   if (allocations.length === 0) {
     return (
       <section className="section-card">
         <h3 style={{ marginTop: 0 }}>Allocations vs. Actuals</h3>
         <div className="empty text-sm text-gray-500">No allocations on this project.</div>
-      </section>
-    );
-  }
-
-  if (isSnapshotMissing) {
-    return (
-      <section className="section-card">
-        <h3 style={{ marginTop: 0 }}>Allocations vs. Actuals</h3>
-        <div className="empty text-sm text-gray-500">
-          No Harvest snapshot — refresh the project from the Harvest panel to populate actuals.
-        </div>
       </section>
     );
   }
@@ -107,11 +95,12 @@ export function ReconciliationPanel({ projectId }: { projectId: string }) {
     }
   }
 
-  // Walk the snapshot breakdown once, indexing by harvest personId, then back-fill
-  // each Row's actualHours by looking up the allocated Person's harvestUserId.
+  // Walk every pinned Harvest project's breakdown, indexing by harvest personId,
+  // then back-fill each Row's actualHours by looking up the allocated Person's
+  // harvestUserId. Multiple pinned Harvest projects sum across them.
   const harvestHoursById = new Map<string, number>();
-  if (snapshot) {
-    for (const task of snapshot.breakdown) {
+  for (const hp of harvestProjects) {
+    for (const task of hp.breakdown) {
       for (const p of task.people) {
         harvestHoursById.set(p.personId, (harvestHoursById.get(p.personId) ?? 0) + p.hours);
       }
@@ -141,10 +130,9 @@ export function ReconciliationPanel({ projectId }: { projectId: string }) {
   }
   unallocated.sort((a, b) => (a.person?.name ?? a.harvestUserId).localeCompare(b.person?.name ?? b.harvestUserId));
 
-  // If no allocated Person is linked to a Harvest user AND no snapshot data
-  // matches, render a CTA toward the /trackers link table rather than empty rows.
+  // CTA toward /trackers when no allocated Person is linked to a Harvest user.
   const anyAllocatedLinked = rows.some((r) => r.linkedToHarvest);
-  if (!snapshot) {
+  if (harvestProjects.length === 0) {
     return (
       <section className="section-card">
         <h3 style={{ marginTop: 0 }}>Allocations vs. Actuals</h3>
