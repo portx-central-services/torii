@@ -73,6 +73,41 @@ export function WorkloadSection({ personId, editable }: WorkloadSectionProps) {
         )}
       </div>
 
+      <div className="workload-totals-row">
+        <div className="workload-total-tile">
+          <div className="workload-total-tile-label">Last 7 days</div>
+          <div className="workload-total-tile-value">
+            {data.totals.last7DaysHours === null
+              ? <span className="dashboard-em">—</span>
+              : `${fmtHours(data.totals.last7DaysHours)}`}
+          </div>
+          {data.totals.last7DaysByDay ? (
+            <SevenDayBarChart days={data.totals.last7DaysByDay} />
+          ) : (
+            <div className="workload-total-tile-sub">Hours billed in Harvest</div>
+          )}
+        </div>
+        <div className="workload-total-tile">
+          <div className="workload-total-tile-label">Last 30 days</div>
+          <div className="workload-total-tile-value">
+            {data.totals.last30DaysHours === null
+              ? <span className="dashboard-em">—</span>
+              : `${fmtHours(data.totals.last30DaysHours)}`}
+          </div>
+          <div className="workload-total-tile-sub">
+            {data.totals.last30DaysHours === null
+              ? 'Hours billed in Harvest'
+              : `Avg ${fmtHours((data.totals.last30DaysHours * 7) / 30)}/week`}
+          </div>
+          {data.totals.last30DaysHours !== null && data.totals.last30DaysHours > 0 && (
+            <ThirtyDayProjectBreakdown
+              projects={data.projects}
+              total={data.totals.last30DaysHours}
+            />
+          )}
+        </div>
+      </div>
+
       {data.projects.length === 0 ? (
         <div className="empty workload-empty">
           {editable ? 'No projects reported. Add one below to start tracking.' : 'Nothing to show yet.'}
@@ -84,7 +119,9 @@ export function WorkloadSection({ personId, editable }: WorkloadSectionProps) {
               <th>Project</th>
               <th style={{ textAlign: 'right' }}>Current</th>
               <th style={{ textAlign: 'right' }}>Planned</th>
-              <th style={{ textAlign: 'right' }}>Lifetime hours</th>
+              <th style={{ textAlign: 'right' }}>7d</th>
+              <th style={{ textAlign: 'right' }}>30d</th>
+              <th style={{ textAlign: 'right' }}>Lifetime</th>
               <th>Variance</th>
               {editable && <th aria-label="Actions" />}
             </tr>
@@ -177,11 +214,25 @@ function WorkloadRowView({
           <span className="dashboard-em">—</span>
         )}
       </td>
-      <td style={{ textAlign: 'right' }}>
+      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+        {row.last7DaysHours === null ? (
+          <span className="dashboard-em">—</span>
+        ) : (
+          fmtHours(row.last7DaysHours)
+        )}
+      </td>
+      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+        {row.last30DaysHours === null ? (
+          <span className="dashboard-em">—</span>
+        ) : (
+          fmtHours(row.last30DaysHours)
+        )}
+      </td>
+      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
         {row.lifetimeHours === null ? (
           <span className="dashboard-em">—</span>
         ) : (
-          `${row.lifetimeHours.toLocaleString('en-US', { maximumFractionDigits: 1 })}h`
+          fmtHours(row.lifetimeHours)
         )}
       </td>
       <td>
@@ -291,6 +342,94 @@ function AddProjectControl({
           </option>
         ))}
       </select>
+    </div>
+  );
+}
+
+function fmtHours(h: number): string {
+  if (h === 0) return '0h';
+  return `${h.toLocaleString('en-US', { maximumFractionDigits: 1 })}h`;
+}
+
+/**
+ * Per-project breakdown of the trailing 30 days, sorted by hours descending.
+ * Projects with zero hours are skipped. When the per-project sum doesn't
+ * match the total (because customer-only Harvest projects contribute to the
+ * total but not to the per-project rows), surface the gap as "Other".
+ */
+function ThirtyDayProjectBreakdown({
+  projects,
+  total,
+}: {
+  projects: WorkloadRow[];
+  total: number;
+}) {
+  const ranked = projects
+    .filter((p) => (p.last30DaysHours ?? 0) > 0)
+    .slice()
+    .sort((a, b) => (b.last30DaysHours ?? 0) - (a.last30DaysHours ?? 0));
+  if (ranked.length === 0) return null;
+  const sumPerProject = ranked.reduce((sum, p) => sum + (p.last30DaysHours ?? 0), 0);
+  const gap = Math.max(0, Number((total - sumPerProject).toFixed(2)));
+  return (
+    <ul className="workload-7d-projects">
+      {ranked.map((p) => (
+        <li key={p.projectId} className="workload-7d-project-row">
+          <Link
+            to={`/projects/${p.projectId}`}
+            className="workload-7d-project-name text-torii hover:underline"
+          >
+            {p.projectName}
+          </Link>
+          <span className="workload-7d-project-hours">{fmtHours(p.last30DaysHours ?? 0)}</span>
+        </li>
+      ))}
+      {gap > 0 && (
+        <li
+          className="workload-7d-project-row workload-7d-project-other"
+          title="Hours on Harvest projects that aren't pinned to a Torii project (typically customer-level support time)"
+        >
+          <span className="workload-7d-project-name">Other</span>
+          <span className="workload-7d-project-hours">{fmtHours(gap)}</span>
+        </li>
+      )}
+    </ul>
+  );
+}
+
+/**
+ * Inline 7-bar chart of hours-per-day. Oldest day on the left, today on the
+ * right. Bar height scales to the larger of (max day in window, 8h target)
+ * so an unusually heavy day towers honestly without making lighter days
+ * disappear when the whole week is quiet.
+ */
+function SevenDayBarChart({ days }: { days: Array<{ date: string; hours: number }> }) {
+  const maxObserved = Math.max(0, ...days.map((d) => d.hours));
+  const scale = Math.max(maxObserved, 8);
+  const dayInitials = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  return (
+    <div className="workload-7d-chart" aria-label="Hours per day for the last 7 days">
+      {days.map((d) => {
+        const pct = scale > 0 ? (d.hours / scale) * 100 : 0;
+        const dow = new Date(`${d.date}T00:00:00Z`).getUTCDay();
+        const initial = dayInitials[dow] ?? '';
+        return (
+          <div
+            key={d.date}
+            className="workload-7d-bar"
+            title={`${d.date}: ${d.hours === 0 ? 'no hours' : fmtHours(d.hours)}`}
+          >
+            <div className="workload-7d-bar-track">
+              <div
+                className="workload-7d-bar-fill"
+                style={{ height: `${pct}%` }}
+                aria-hidden
+              />
+            </div>
+            <div className="workload-7d-bar-label">{initial}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
 } from '@torii/shared';
 import type { DB } from '../db.js';
 import { requireUser } from '../plugins/guards.js';
+import { computePersonHarvestWindows, type PerDayHours } from '../lib/person-harvest-windows.js';
 
 interface RegisterWorkloadOptions {
   db: DB;
@@ -43,6 +44,10 @@ interface WorkloadRow {
   weeklyPct: number;
   allocatedPct: number;
   lifetimeHours: number | null;
+  /** Sum of this person's Harvest entries on this project over the last 7 days. */
+  last7DaysHours: number | null;
+  /** Sum over the last 30 days. */
+  last30DaysHours: number | null;
   varianceBucket: VarianceBucket;
 }
 
@@ -50,6 +55,13 @@ interface WorkloadResponse {
   availabilityPct: number;
   defaultCapacityPct: number;
   lastReportedAt: string | null;
+  /** Cross-project totals — includes hours on customer-only Harvest projects. Null when the person is not Harvest-linked. */
+  totals: {
+    last7DaysHours: number | null;
+    last30DaysHours: number | null;
+    /** 7 entries, oldest first, newest last. Null when the person isn't Harvest-linked. */
+    last7DaysByDay: PerDayHours[] | null;
+  };
   projects: WorkloadRow[];
 }
 
@@ -105,33 +117,35 @@ async function buildWorkload(db: DB, personId: string): Promise<WorkloadResponse
     }
   }
 
-  // Lifetime hours per project: sum the person's hours across every pinned
-  // HarvestProject row whose `projectId` is in our project set. Skip when the
-  // person isn't Harvest-linked.
-  const projectIds = [...byProject.keys()];
-  const harvestHoursByProject = new Map<string, number>();
-  if (person.harvestUserId && projectIds.length > 0) {
-    const harvestProjects = await db.harvestProject.findMany({
-      where: { projectId: { in: projectIds } },
-      select: { projectId: true, breakdown: true },
-    });
-    for (const hp of harvestProjects) {
-      if (!hp.projectId) continue;
-      const breakdown = (hp.breakdown ?? []) as Array<{
-        people?: Array<{ personId: string; hours: number }>;
-      }>;
-      let sum = 0;
-      for (const task of breakdown) {
-        for (const row of task.people ?? []) {
-          if (row.personId === person.harvestUserId) sum += row.hours;
-        }
+  // Hours rollup from Harvest: per-(person, project, window) computed in one
+  // pass across every harvest_projects.raw.timeEntries. Customer-only Harvest
+  // projects contribute to TOTALS but not to per-project rows.
+  const harvestWindows = await computePersonHarvestWindows(db, person.harvestUserId);
+  const harvestHoursByProject = harvestWindows.perProjectLifetime;
+  const sevenDayByProject = harvestWindows.perProject7d;
+  const thirtyDayByProject = harvestWindows.perProject30d;
+
+  // Fold "recent-hours" projects into the union when not already there —
+  // anything this person logged time on in the last 30 days surfaces in the
+  // table, even without a formal allocation or self-reported capacity.
+  if (person.harvestUserId && thirtyDayByProject.size > 0) {
+    const recentProjectIds = [...thirtyDayByProject.keys()].filter((id) => !byProject.has(id));
+    if (recentProjectIds.length > 0) {
+      const fetched = await db.project.findMany({
+        where: { id: { in: recentProjectIds } },
+      });
+      for (const proj of fetched) {
+        if (byProject.has(proj.id)) continue;
+        byProject.set(proj.id, {
+          project: proj as typeof allocations[number]['project'],
+          weeklyPct: 0,
+          allocatedPct: 0,
+        });
       }
-      harvestHoursByProject.set(
-        hp.projectId,
-        (harvestHoursByProject.get(hp.projectId) ?? 0) + sum,
-      );
     }
   }
+
+  const projectIds = [...byProject.keys()];
 
   // Total planned hours per project for the variance comparison. We reuse the
   // same `plannedHoursForAllocation` math the reconciliation panel uses, summed
@@ -160,6 +174,12 @@ async function buildWorkload(db: DB, personId: string): Promise<WorkloadResponse
       const lifetimeHours = person.harvestUserId
         ? Number((harvestHoursByProject.get(acc.project.id) ?? 0).toFixed(2))
         : null;
+      const last7DaysHours = person.harvestUserId
+        ? Number((sevenDayByProject.get(acc.project.id) ?? 0).toFixed(2))
+        : null;
+      const last30DaysHours = person.harvestUserId
+        ? Number((thirtyDayByProject.get(acc.project.id) ?? 0).toFixed(2))
+        : null;
       const planned = plannedByProject.get(acc.project.id) ?? 0;
       const bucket = varianceBucket(planned, lifetimeHours);
       return {
@@ -170,6 +190,8 @@ async function buildWorkload(db: DB, personId: string): Promise<WorkloadResponse
         weeklyPct: acc.weeklyPct,
         allocatedPct: acc.allocatedPct,
         lifetimeHours,
+        last7DaysHours,
+        last30DaysHours,
         varianceBucket: bucket,
       };
     })
@@ -186,6 +208,11 @@ async function buildWorkload(db: DB, personId: string): Promise<WorkloadResponse
     availabilityPct: person.availabilityPct,
     defaultCapacityPct: person.defaultCapacityPct,
     lastReportedAt,
+    totals: {
+      last7DaysHours: person.harvestUserId ? harvestWindows.totals.last7DaysHours : null,
+      last30DaysHours: person.harvestUserId ? harvestWindows.totals.last30DaysHours : null,
+      last7DaysByDay: person.harvestUserId ? harvestWindows.last7DaysByDay : null,
+    },
     projects,
   };
 }

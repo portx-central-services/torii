@@ -282,6 +282,56 @@ export class SyncEngine {
     let status: TrackerConnectionStatus = TrackerConnectionStatus.ok;
     let topLevelError: string | undefined;
 
+    // Step 0 — auto-link Harvest users to Torii Persons by exact email match.
+    // Email is a strong unique identifier; we never auto-link by name (that's
+    // the fuzzy-match path admins must opt into via scripts/link-harvest-users.ts).
+    // Persons that already have a harvest_user_id are skipped; Harvest users
+    // whose email matches no Person OR matches multiple Persons are skipped.
+    try {
+      const harvestUsers = await adapter.listUsers();
+      const linkedIds = new Set<string>(
+        (await db.person.findMany({
+          where: { harvestUserId: { not: null } },
+          select: { harvestUserId: true },
+        }))
+          .map((p) => p.harvestUserId)
+          .filter((id): id is string => id !== null),
+      );
+      for (const hu of harvestUsers) {
+        if (linkedIds.has(hu.id)) continue;
+        const email = hu.email.trim().toLowerCase();
+        if (!email) continue;
+        // Case-insensitive email match against unlinked Persons.
+        const candidates = await db.person.findMany({
+          where: {
+            email: { equals: email, mode: 'insensitive' },
+            harvestUserId: null,
+          },
+          select: { id: true },
+        });
+        if (candidates.length !== 1) continue;
+        try {
+          await db.person.update({
+            where: { id: candidates[0]!.id },
+            data: { harvestUserId: hu.id },
+          });
+        } catch (err) {
+          // Race against another sync or admin link; log and continue.
+          console.warn(
+            '[SyncEngine.syncHarvestConnection] auto-link skipped',
+            { harvestUserId: hu.id, err: err instanceof Error ? err.message : err },
+          );
+        }
+      }
+    } catch (err) {
+      if (err instanceof HarvestAuthError) {
+        status = TrackerConnectionStatus.auth_failed;
+        topLevelError = 'Harvest auth failed; refresh credentials';
+      } else {
+        console.error('[SyncEngine.syncHarvestConnection] listUsers (auto-link)', err);
+      }
+    }
+
     // Step 1 — ingest Harvest clients into local Customers.
     // Auto-create a Customer the first time we see a Harvest client (the Harvest
     // client IS the customer; making the admin click "Create" was needless friction).

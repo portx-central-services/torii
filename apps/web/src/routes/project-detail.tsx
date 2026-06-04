@@ -121,9 +121,11 @@ export function ProjectDetailPage() {
             </span>
           </div>
           {teamFields.map((field) => {
-            // Prefer the resolved Person (linked to /people/:id); fall back to the
-            // legacy `details.*` string when the FK is null; fall back to em-dash.
-            const resolved =
+            // Primary FK (one per role), plus any secondaries parsed from
+            // the multi-person Monday details string. Render every name linked
+            // to /people/:id; fall back to the raw details string when neither
+            // FK nor secondaries resolved; em-dash when totally empty.
+            const primary =
               field.key === 'project_manager'
                 ? project.projectManager
                 : field.key === 'solution_architect'
@@ -131,15 +133,31 @@ export function ProjectDetailPage() {
                   : field.key === 'solution_consultant'
                     ? project.solutionConsultant
                     : null;
+            const secondaries =
+              field.key === 'project_manager'
+                ? project.roleSecondaries?.projectManager ?? []
+                : field.key === 'solution_architect'
+                  ? project.roleSecondaries?.solutionArchitect ?? []
+                  : field.key === 'solution_consultant'
+                    ? project.roleSecondaries?.solutionConsultant ?? []
+                    : [];
             const legacyString = project.details?.[field.key];
+            const allRefs = primary ? [primary, ...secondaries] : secondaries;
             return (
               <div key={field.key} className="team-row">
                 <span className="team-row-label">{field.label}</span>
                 <span className="team-row-value">
-                  {resolved ? (
-                    <Link to={`/people/${resolved.id}`} className="text-torii hover:underline">
-                      {resolved.name}
-                    </Link>
+                  {allRefs.length > 0 ? (
+                    <span className="team-row-people">
+                      {allRefs.map((ref, i) => (
+                        <span key={ref.id}>
+                          {i > 0 && ', '}
+                          <Link to={`/people/${ref.id}`} className="text-torii hover:underline">
+                            {ref.name}
+                          </Link>
+                        </span>
+                      ))}
+                    </span>
                   ) : (
                     legacyString || '—'
                   )}

@@ -5,6 +5,8 @@ import { NotFoundError, ValidationError } from '@torii/shared';
 import type { DB } from '../db.js';
 import type { Env } from '../env.js';
 import { requireAdmin, requireUser } from '../plugins/guards.js';
+import { buildPeopleNameIndex, secondariesForProject } from '../lib/role-secondaries.js';
+import { computePersonHarvestWindows } from '../lib/person-harvest-windows.js';
 import { decryptToken } from '../sync/encryption.js';
 import { HarvestAdapter } from '../sync/harvest/HarvestAdapter.js';
 import { plannedHoursForAllocation } from '@torii/shared';
@@ -105,6 +107,11 @@ export function registerPeopleRoutes(
    * Every project this person is on, across all four roles (owner / PM / SA / SC).
    * The same project appears more than once when the person holds multiple roles
    * on it. Drives the `/people/:id` page.
+   *
+   * Surfaces both primary (FK) and secondary (multi-person `details.*`) role
+   * assignments. The single-FK schema can only hold one person per role, but
+   * Monday allows multiple — this endpoint pulls in projects where the person
+   * is listed as a co-role even when not the FK target.
    */
   app.get('/api/people/:id/projects', async (request) => {
     requireUser(request);
@@ -113,34 +120,92 @@ export function registerPeopleRoutes(
     const person = await db.person.findUnique({ where: { id } });
     if (!person) throw new NotFoundError('Person not found');
 
-    const projects = await db.project.findMany({
-      where: {
-        OR: [
-          { ownerId: id },
-          { projectManagerId: id },
-          { solutionArchitectId: id },
-          { solutionConsultantId: id },
-        ],
-      },
-      include: {
-        customer: true,
-        harvestProjects: true,
-        projectManager: true,
-        solutionArchitect: true,
-        solutionConsultant: true,
-      },
-      orderBy: { name: 'asc' },
-    });
+    const [allPeople, projects, harvestWindows] = await Promise.all([
+      db.person.findMany({ select: { id: true, name: true } }),
+      db.project.findMany({
+        where: {
+          OR: [
+            { ownerId: id },
+            { projectManagerId: id },
+            { solutionArchitectId: id },
+            { solutionConsultantId: id },
+            // Co-role: the person's name appears in any role's details string.
+            // String-contains on JSONB is a candidate filter; the in-JS pass
+            // below uses the splitter + name index to verify (avoids false
+            // positives like substring matches inside another name).
+            { details: { path: ['project_manager'], string_contains: person.name } },
+            { details: { path: ['solution_architect'], string_contains: person.name } },
+            { details: { path: ['solution_consultant'], string_contains: person.name } },
+          ],
+        },
+        include: {
+          customer: true,
+          harvestProjects: true,
+          projectManager: true,
+          solutionArchitect: true,
+          solutionConsultant: true,
+        },
+        orderBy: { name: 'asc' },
+      }),
+      computePersonHarvestWindows(db, person.harvestUserId),
+    ]);
+    const peopleIndex = buildPeopleNameIndex(allPeople);
 
-    // Enumerate the role(s) for each project; a project where this person is both
-    // Owner and PM appears twice — once per role — so the UI can group cleanly.
-    const out: Array<{ role: 'owner' | 'pm' | 'sa' | 'sc'; project: ReturnType<typeof serializeProject> }> = [];
+    type Role = 'owner' | 'pm' | 'sa' | 'sc';
+    const out: Array<{
+      role: Role;
+      primary: boolean;
+      last30DaysHours: number | null;
+      project: ReturnType<typeof serializeProject>;
+    }> = [];
+
+    function detailContains(detailsKey: 'project_manager' | 'solution_architect' | 'solution_consultant', projectDetails: Record<string, string | undefined>): boolean {
+      const refs = secondariesForProject(
+        projectDetails as { project_manager?: string; solution_architect?: string; solution_consultant?: string },
+        // pretend nothing is primary so the helper returns EVERY named individual.
+        { projectManagerId: null, solutionArchitectId: null, solutionConsultantId: null },
+        peopleIndex,
+      );
+      const list =
+        detailsKey === 'project_manager'
+          ? refs.projectManager
+          : detailsKey === 'solution_architect'
+            ? refs.solutionArchitect
+            : refs.solutionConsultant;
+      return list.some((r) => r.id === id);
+    }
+
     for (const project of projects) {
-      const serialized = serializeProject(project);
-      if (project.ownerId === id) out.push({ role: 'owner', project: serialized });
-      if (project.projectManagerId === id) out.push({ role: 'pm', project: serialized });
-      if (project.solutionArchitectId === id) out.push({ role: 'sa', project: serialized });
-      if (project.solutionConsultantId === id) out.push({ role: 'sc', project: serialized });
+      const serialized = serializeProject(project, peopleIndex);
+      const details = (project.details ?? {}) as Record<string, string | undefined>;
+      const last30DaysHours = person.harvestUserId
+        ? (harvestWindows.perProject30d.get(project.id) ?? 0)
+        : null;
+
+      if (project.ownerId === id) {
+        out.push({ role: 'owner', primary: true, last30DaysHours, project: serialized });
+      }
+
+      // PM
+      if (project.projectManagerId === id) {
+        out.push({ role: 'pm', primary: true, last30DaysHours, project: serialized });
+      } else if (detailContains('project_manager', details)) {
+        out.push({ role: 'pm', primary: false, last30DaysHours, project: serialized });
+      }
+
+      // SA
+      if (project.solutionArchitectId === id) {
+        out.push({ role: 'sa', primary: true, last30DaysHours, project: serialized });
+      } else if (detailContains('solution_architect', details)) {
+        out.push({ role: 'sa', primary: false, last30DaysHours, project: serialized });
+      }
+
+      // SC
+      if (project.solutionConsultantId === id) {
+        out.push({ role: 'sc', primary: true, last30DaysHours, project: serialized });
+      } else if (detailContains('solution_consultant', details)) {
+        out.push({ role: 'sc', primary: false, last30DaysHours, project: serialized });
+      }
     }
     return out;
   });

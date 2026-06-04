@@ -97,7 +97,7 @@ export function registerCustomerRoutes(
       harvestClientId: customer.harvestClientId,
       createdAt: customer.createdAt.toISOString(),
       updatedAt: customer.updatedAt.toISOString(),
-      projects: customer.projects.map(serializeProject),
+      projects: customer.projects.map((p) => serializeProject(p)),
       harvestProjects: customer.harvestProjects.map((hp) => ({
         id: hp.id,
         name: hp.name,

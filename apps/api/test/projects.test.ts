@@ -31,9 +31,13 @@ function makeDbInner() {
   };
   const phaseAuditLog = { create: vi.fn() };
   const trackerConnection = { findFirst: vi.fn() };
+  // `serializeProject` now loads a Person name index for resolving multi-person
+  // role secondaries. Default to an empty array so the call resolves without
+  // resorting per-test boilerplate.
+  const person = { findMany: vi.fn().mockResolvedValue([]) };
   const tx = { project, phaseAuditLog };
   const $transaction = vi.fn(async (fn: (tx: { project: typeof project; phaseAuditLog: typeof phaseAuditLog }) => unknown) => fn(tx));
-  return { project, phaseAuditLog, trackerConnection, $transaction, tx };
+  return { project, phaseAuditLog, trackerConnection, person, $transaction, tx };
 }
 
 describe('projects routes', () => {

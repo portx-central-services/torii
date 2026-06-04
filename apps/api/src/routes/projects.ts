@@ -14,6 +14,12 @@ import {
 } from '@torii/shared';
 import type { DB } from '../db.js';
 import { requireUser, requirePM } from '../plugins/guards.js';
+import {
+  buildPeopleNameIndex,
+  secondariesForProject,
+  type PeopleNameIndex,
+  type PersonRef,
+} from '../lib/role-secondaries.js';
 
 const idParams = z.object({ id: z.string().min(1) });
 
@@ -97,9 +103,29 @@ function deriveOverBudget(rows: JoinedHarvestProject[] | null | undefined): bool
   return spentHours > budgetHours;
 }
 
-export function serializeProject(p: ProjectWithRelations) {
+export function serializeProject(
+  p: ProjectWithRelations,
+  peopleIndex?: PeopleNameIndex,
+) {
   const details = (p.details ?? {}) as ProjectDetails;
   const hours = aggregateHarvestHours(p.harvestProjects);
+  // When a people index is provided, surface every individual named in the
+  // role detail strings beyond the FK primary. The single-FK schema can't
+  // represent multi-person assignments, but the Monday strings can; this lets
+  // every UI surface both. When the index is absent, secondaries default to
+  // empty arrays (read paths that don't care can skip the cost).
+  const empty = { projectManager: [] as PersonRef[], solutionArchitect: [] as PersonRef[], solutionConsultant: [] as PersonRef[] };
+  const roleSecondaries = peopleIndex
+    ? secondariesForProject(
+        details as { project_manager?: string; solution_architect?: string; solution_consultant?: string },
+        {
+          projectManagerId: p.projectManagerId,
+          solutionArchitectId: p.solutionArchitectId,
+          solutionConsultantId: p.solutionConsultantId,
+        },
+        peopleIndex,
+      )
+    : empty;
   return {
     id: p.id,
     name: p.name,
@@ -125,6 +151,9 @@ export function serializeProject(p: ProjectWithRelations) {
     projectManager: personOut(p.projectManager),
     solutionArchitect: personOut(p.solutionArchitect),
     solutionConsultant: personOut(p.solutionConsultant),
+    /** Additional individuals beyond the FK primary (parsed from `details.<role>`
+     *  comma-separated lists). Empty arrays when no secondaries exist. */
+    roleSecondaries,
     trackerRef: p.trackerRef,
     fieldMapping: p.fieldMapping,
     createdAt: p.createdAt.toISOString(),
@@ -159,36 +188,44 @@ export function registerProjectRoutes(
       orderBy = { name: 'asc' };
     }
 
-    const projects = await db.project.findMany({
-      where,
-      orderBy,
-      include: {
-        customer: true,
-        harvestProjects: true,
-        projectManager: true,
-        solutionArchitect: true,
-        solutionConsultant: true,
-      },
-    });
-    return projects.map(serializeProject);
+    const [projects, allPeople] = await Promise.all([
+      db.project.findMany({
+        where,
+        orderBy,
+        include: {
+          customer: true,
+          harvestProjects: true,
+          projectManager: true,
+          solutionArchitect: true,
+          solutionConsultant: true,
+        },
+      }),
+      db.person.findMany({ select: { id: true, name: true } }),
+    ]);
+    const peopleIndex = buildPeopleNameIndex(allPeople);
+    return projects.map((p) => serializeProject(p, peopleIndex));
   });
 
   app.get('/api/projects/:id', async (request) => {
     requireUser(request);
     const { id } = idParams.parse(request.params);
 
-    const project = await db.project.findUnique({
-      where: { id },
-      include: {
-        allocations: true,
-        customer: true,
-        harvestProjects: true,
-        projectManager: true,
-        solutionArchitect: true,
-        solutionConsultant: true,
-      },
-    });
+    const [project, allPeople] = await Promise.all([
+      db.project.findUnique({
+        where: { id },
+        include: {
+          allocations: true,
+          customer: true,
+          harvestProjects: true,
+          projectManager: true,
+          solutionArchitect: true,
+          solutionConsultant: true,
+        },
+      }),
+      db.person.findMany({ select: { id: true, name: true } }),
+    ]);
     if (!project) throw new NotFoundError('Project not found');
+    const peopleIndex = buildPeopleNameIndex(allPeople);
 
     const trackerRef = project.trackerRef as { provider?: string } | null;
     let lastSyncedAt: string | null = null;
@@ -202,7 +239,7 @@ export function registerProjectRoutes(
     }
 
     return {
-      ...serializeProject(project),
+      ...serializeProject(project, peopleIndex),
       allocations: project.allocations.map((a) => ({
         id: a.id,
         projectId: a.projectId,

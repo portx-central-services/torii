@@ -258,12 +258,48 @@ export const ProjectRiskUpdateUpsertSchema = z.object({
 export const RiskListItemSchema = z.object({
   projectId: z.string(),
   projectName: z.string(),
+  /** Customer this project belongs to. Null when the project isn't mapped yet. */
+  customerId: z.string().nullable(),
+  customerName: z.string().nullable(),
   weekOf: isoDate,
   ragLevel: RagLevelSchema,
   riskTypes: z.array(RiskTypeSchema),
   state: RiskStateSchema,
   title: z.string(),
 });
+
+/** Row in the `stale[]` array returned by `GET /api/risks?include=stale`. */
+export const StaleRiskRowSchema = z.object({
+  projectId: z.string(),
+  projectName: z.string(),
+  customerId: z.string().nullable(),
+  customerName: z.string().nullable(),
+  /** Most-recent update's RAG; null when the project has zero updates. */
+  lastRagLevel: RagLevelSchema.nullable(),
+  /** ISO date of the most-recent update; null when zero updates. */
+  lastWeekOf: isoDate.nullable(),
+  /** Whole weeks between today's ISO Monday and lastWeekOf; null when zero updates. */
+  weeksSinceLastUpdate: z.number().int().nullable(),
+});
+export type StaleRiskRow = z.infer<typeof StaleRiskRowSchema>;
+
+/** Response shape for `GET /api/risks?include=stale`. */
+export const RisksWithStaleSchema = z.object({
+  atRisk: z.array(RiskListItemSchema),
+  stale: z.array(StaleRiskRowSchema),
+});
+export type RisksWithStale = z.infer<typeof RisksWithStaleSchema>;
+
+/** Row returned by `GET /api/risks/my-week` (the PM bulk-update digest). */
+export const MyWeekProjectSchema = z.object({
+  projectId: z.string(),
+  projectName: z.string(),
+  projectPhase: PhaseSchema,
+  projectState: ProjectStateSchema,
+  customerId: z.string().nullable(),
+  customerName: z.string().nullable(),
+});
+export type MyWeekProject = z.infer<typeof MyWeekProjectSchema>;
 
 /**
  * Per-(task, person) row in a Harvest snapshot. Hours-only by design.
@@ -451,6 +487,10 @@ export const WorkloadRowSchema = z.object({
   allocatedPct: z.number().int().min(0),
   /** Sum of Harvest hours for this person on this project. Null when person isn't Harvest-linked. */
   lifetimeHours: z.number().nullable(),
+  /** Sum over the trailing 7 days. Null when person isn't Harvest-linked. */
+  last7DaysHours: z.number().nullable(),
+  /** Sum over the trailing 30 days. Null when person isn't Harvest-linked. */
+  last30DaysHours: z.number().nullable(),
   varianceBucket: z.enum(['green', 'amber', 'red', 'neutral']),
 });
 export type WorkloadRow = z.infer<typeof WorkloadRowSchema>;
@@ -461,6 +501,20 @@ export const WorkloadResponseSchema = z.object({
   defaultCapacityPct: z.number().int().min(0).max(100),
   /** ISO timestamp of the most recent capacity-row update; null when no rows exist. */
   lastReportedAt: z.string().nullable(),
+  /** Cross-project totals — sum across every Harvest project (including customer-only). Fields are null when the person is not Harvest-linked. */
+  totals: z.object({
+    last7DaysHours: z.number().nullable(),
+    last30DaysHours: z.number().nullable(),
+    /** 7 entries, oldest first; null when the person isn't Harvest-linked. */
+    last7DaysByDay: z
+      .array(
+        z.object({
+          date: z.string(),
+          hours: z.number().nonnegative(),
+        }),
+      )
+      .nullable(),
+  }),
   projects: z.array(WorkloadRowSchema),
 });
 export type WorkloadResponse = z.infer<typeof WorkloadResponseSchema>;

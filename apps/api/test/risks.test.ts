@@ -7,7 +7,7 @@ import type { AuthenticatedUser } from '../src/types.js';
 import { isoWeekMondayUTC, toIsoDateUTC } from '../src/lib/iso-week.js';
 
 function makeDbInner() {
-  const project = { findUnique: vi.fn() };
+  const project = { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) };
   const projectRiskUpdate = {
     findMany: vi.fn(),
     upsert: vi.fn(),
@@ -93,6 +93,161 @@ describe('risks routes', () => {
       const body = r.json() as Array<{ title: string }>;
       expect(body[0]!.title.length).toBe(120);
       expect(body[0]!.title.endsWith('…')).toBe(true);
+    });
+  });
+
+  describe('GET /api/risks (customer fields + include=stale)', () => {
+    it('emits customerId / customerName on at-risk rows', async () => {
+      userRef.current = viewerUser;
+      db.$queryRaw.mockResolvedValueOnce([
+        {
+          project_id: 'p-red',
+          project_name: 'Red One',
+          customer_id: 'cust-1',
+          customer_name: 'Acme Corp',
+          week_of: new Date('2026-06-01T00:00:00Z'),
+          rag_level: 'Red',
+          risk_types: ['Technical'],
+          state: 'Blocked',
+          description: 'auth glitch',
+        },
+      ]);
+      const r = await app.inject({ method: 'GET', url: '/api/risks' });
+      expect(r.statusCode).toBe(200);
+      const rows = r.json() as Array<{ customerId: string | null; customerName: string | null }>;
+      expect(rows[0]).toMatchObject({ customerId: 'cust-1', customerName: 'Acme Corp' });
+    });
+
+    it('returns the object form { atRisk, stale } when include=stale', async () => {
+      userRef.current = viewerUser;
+      const currentMonday = isoWeekMondayUTC(new Date());
+      // First $queryRaw call → at-risk list (one Amber row).
+      db.$queryRaw.mockResolvedValueOnce([
+        {
+          project_id: 'p-amber',
+          project_name: 'Amber',
+          customer_id: null,
+          customer_name: null,
+          week_of: currentMonday,
+          rag_level: 'Amber',
+          risk_types: ['Schedule'],
+          state: 'Inform',
+          description: 'slip',
+        },
+      ]);
+      // Second $queryRaw call → latest-per-project list (one project, last update 3 weeks ago).
+      const threeWeeksAgo = new Date(currentMonday.getTime() - 3 * 7 * 24 * 60 * 60 * 1000);
+      db.$queryRaw.mockResolvedValueOnce([
+        {
+          project_id: 'p-stale',
+          project_name: 'Stale',
+          customer_id: null,
+          customer_name: null,
+          week_of: threeWeeksAgo,
+          rag_level: 'Green',
+        },
+      ]);
+      const r = await app.inject({ method: 'GET', url: '/api/risks?include=stale' });
+      expect(r.statusCode).toBe(200);
+      const body = r.json() as {
+        atRisk: Array<{ projectId: string }>;
+        stale: Array<{ projectId: string; weeksSinceLastUpdate: number | null }>;
+      };
+      expect(body.atRisk).toHaveLength(1);
+      expect(body.atRisk[0]!.projectId).toBe('p-amber');
+      expect(body.stale).toHaveLength(1);
+      expect(body.stale[0]).toMatchObject({ projectId: 'p-stale', weeksSinceLastUpdate: 3 });
+    });
+
+    it('excludes a project whose latest update is exactly 2 weeks old (strictly more than 2)', async () => {
+      userRef.current = viewerUser;
+      const currentMonday = isoWeekMondayUTC(new Date());
+      const twoWeeksAgo = new Date(currentMonday.getTime() - 2 * 7 * 24 * 60 * 60 * 1000);
+      db.$queryRaw.mockResolvedValueOnce([]);
+      db.$queryRaw.mockResolvedValueOnce([
+        {
+          project_id: 'p-2w',
+          project_name: 'Two Weeks',
+          customer_id: null,
+          customer_name: null,
+          week_of: twoWeeksAgo,
+          rag_level: 'Green',
+        },
+      ]);
+      const r = await app.inject({ method: 'GET', url: '/api/risks?include=stale' });
+      const body = r.json() as { stale: Array<unknown> };
+      expect(body.stale).toHaveLength(0);
+    });
+
+    it('includes never-updated projects with null fields', async () => {
+      userRef.current = viewerUser;
+      db.$queryRaw.mockResolvedValueOnce([]);
+      db.$queryRaw.mockResolvedValueOnce([
+        {
+          project_id: 'p-new',
+          project_name: 'Never Updated',
+          customer_id: null,
+          customer_name: null,
+          week_of: null,
+          rag_level: null,
+        },
+      ]);
+      const r = await app.inject({ method: 'GET', url: '/api/risks?include=stale' });
+      const body = r.json() as {
+        stale: Array<{
+          projectId: string;
+          lastRagLevel: string | null;
+          lastWeekOf: string | null;
+          weeksSinceLastUpdate: number | null;
+        }>;
+      };
+      expect(body.stale).toHaveLength(1);
+      expect(body.stale[0]).toMatchObject({
+        projectId: 'p-new',
+        lastRagLevel: null,
+        lastWeekOf: null,
+        weeksSinceLastUpdate: null,
+      });
+    });
+  });
+
+  describe('GET /api/risks/my-week', () => {
+    it('rejects non-PM with 403', async () => {
+      userRef.current = viewerUser;
+      const r = await app.inject({ method: 'GET', url: '/api/risks/my-week' });
+      expect(r.statusCode).toBe(403);
+      expect(db.project.findMany).not.toHaveBeenCalled();
+    });
+
+    it('returns 401 when unauthenticated', async () => {
+      userRef.current = null;
+      const r = await app.inject({ method: 'GET', url: '/api/risks/my-week' });
+      expect(r.statusCode).toBe(401);
+    });
+
+    it('queries for projects in the viewer\'s role-FK list missing a current-week update', async () => {
+      userRef.current = pmUser;
+      db.project.findMany.mockResolvedValue([
+        {
+          id: 'proj-1',
+          name: 'My Project',
+          phase: 'Development',
+          state: 'OnTrack',
+          customerId: 'cust-1',
+          customer: { id: 'cust-1', name: 'Acme' },
+        },
+      ]);
+      const r = await app.inject({ method: 'GET', url: '/api/risks/my-week' });
+      expect(r.statusCode).toBe(200);
+      const body = r.json() as Array<{ projectId: string; customerName: string | null }>;
+      expect(body).toHaveLength(1);
+      expect(body[0]).toMatchObject({ projectId: 'proj-1', customerName: 'Acme' });
+      // Verify the where clause includes the role-FK OR plus the "no current-week update" NOT clause.
+      const call = db.project.findMany.mock.calls[0]![0] as {
+        where: { OR: unknown[]; NOT: { riskUpdates: { some: { weekOf: Date } } } };
+      };
+      expect(call.where.OR).toHaveLength(4);
+      expect(call.where.NOT.riskUpdates.some.weekOf).toBeInstanceOf(Date);
     });
   });
 

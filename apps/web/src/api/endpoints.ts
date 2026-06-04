@@ -3,10 +3,13 @@ import type {
   CustomerReconciliation,
   DashboardSummary,
   HarvestClientListItem,
+  MyWeekProject,
   PeopleOverviewRow,
   Phase,
   ProjectState,
+  RisksWithStale,
   Role,
+  StaleRiskRow,
   WorkloadResponse,
   WorkloadUpdate,
 } from '@torii/shared';
@@ -17,7 +20,10 @@ export type {
   CustomerReconciliation,
   DashboardSummary,
   HarvestClientListItem,
+  MyWeekProject,
   PeopleOverviewRow,
+  RisksWithStale,
+  StaleRiskRow,
   WorkloadResponse,
   WorkloadRow,
   WorkloadUpdate,
@@ -135,6 +141,14 @@ export interface Project {
   projectManager: Person | null;
   solutionArchitect: Person | null;
   solutionConsultant: Person | null;
+  /** Additional individuals beyond the FK primary, parsed from `details.<role>`
+   *  comma-separated lists. The schema has one FK slot per role; multi-person
+   *  Monday assignments overflow into these arrays so UI can render all names. */
+  roleSecondaries: {
+    projectManager: Array<{ id: string; name: string }>;
+    solutionArchitect: Array<{ id: string; name: string }>;
+    solutionConsultant: Array<{ id: string; name: string }>;
+  };
   trackerRef: { provider: string; externalId: string } | null;
   fieldMapping: Record<string, 'torii' | 'monday'>;
   createdAt: string;
@@ -145,6 +159,9 @@ export interface Project {
 export interface RiskListItem {
   projectId: string;
   projectName: string;
+  /** Customer the project belongs to. Null when the project isn't mapped yet. */
+  customerId: string | null;
+  customerName: string | null;
   weekOf: string;
   ragLevel: RagLevel;
   riskTypes: RiskType[];
@@ -284,8 +301,12 @@ export const endpoints = {
   personAllocations: (id: string, from: string, to: string) =>
     api.get<PersonAllocation[]>(`/api/people/${id}/allocations`, { from, to }),
   /** Every project this person holds a role on (owner / pm / sa / sc). Same project may appear multiple times. */
+  /** Every role association — owner/PM/SA/SC — for this person, across both
+   *  FK-primary and details-secondary (multi-person Monday columns).
+   *  `last30DaysHours` is this person's Harvest hours on that project over the
+   *  trailing 30 days; null when the person isn't Harvest-linked. */
   personProjects: (id: string) =>
-    api.get<Array<{ role: 'owner' | 'pm' | 'sa' | 'sc'; project: Project }>>(`/api/people/${id}/projects`),
+    api.get<Array<{ role: 'owner' | 'pm' | 'sa' | 'sc'; primary: boolean; last30DaysHours: number | null; project: Project }>>(`/api/people/${id}/projects`),
   /** Per-project Allocations-vs-Actuals reconciliation rows for this Person. */
   personReconciliation: (id: string) =>
     api.get<PersonReconciliationRow[]>(`/api/people/${id}/reconciliation`),
@@ -332,6 +353,8 @@ export const endpoints = {
     api.put<UserPreferences>('/api/me/preferences', { hiddenProjectColumns }),
 
   listRisks: () => api.get<RiskListItem[]>('/api/risks'),
+  listRisksWithStale: () => api.get<RisksWithStale>('/api/risks', { include: 'stale' }),
+  myWeekProjects: () => api.get<MyWeekProject[]>('/api/risks/my-week'),
   getProjectRiskUpdates: (projectId: string) =>
     api.get<ProjectRiskUpdate[]>(`/api/projects/${projectId}/risk-updates`),
   upsertProjectRiskUpdate: (projectId: string, body: ProjectRiskUpdateUpsert) =>

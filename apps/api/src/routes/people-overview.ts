@@ -7,6 +7,7 @@ import {
 } from '@torii/shared';
 import type { DB } from '../db.js';
 import { requireUser } from '../plugins/guards.js';
+import { buildPeopleNameIndex, secondariesForProject } from '../lib/role-secondaries.js';
 
 interface RegisterPeopleOverviewOptions {
   db: DB;
@@ -91,6 +92,15 @@ export function registerPeopleOverviewRoutes(
     // listed as Owner / PM / SA / SC via the FK columns. PortX populates these
     // from Monday sync, so they're the most reliable "what's a person actually
     // on" signal — more so than formal Allocation rows.
+    // Role-FK projects, plus projects with any multi-person details string
+    // that mentions one of our people. The string_contains filter is broad —
+    // the in-memory pass below uses the name-index splitter to verify each
+    // match precisely (so "Greg Newton" won't false-match "Greg Newton-Smith").
+    const nameContainsClauses = people.flatMap((person) => [
+      { details: { path: ['project_manager'], string_contains: person.name } },
+      { details: { path: ['solution_architect'], string_contains: person.name } },
+      { details: { path: ['solution_consultant'], string_contains: person.name } },
+    ]);
     const roleProjects = await db.project.findMany({
       where: {
         state: { not: 'Done' },
@@ -99,10 +109,30 @@ export function registerPeopleOverviewRoutes(
           { projectManagerId: { in: personIds } },
           { solutionArchitectId: { in: personIds } },
           { solutionConsultantId: { in: personIds } },
+          ...nameContainsClauses,
         ],
       },
       include: { customer: true },
     });
+
+    // Name index — used below to map each project's multi-person details
+    // strings to Person rows, so secondaries surface in the same currentProjects
+    // union the FK primaries do.
+    const peopleNameIndex = buildPeopleNameIndex(people);
+    // Pre-resolve secondary individuals per project so we don't re-split
+    // identical strings inside the per-person loop.
+    const secondariesByProjectId = new Map<string, ReturnType<typeof secondariesForProject>>();
+    for (const p of roleProjects) {
+      const d = (p.details ?? {}) as { project_manager?: string; solution_architect?: string; solution_consultant?: string };
+      secondariesByProjectId.set(
+        p.id,
+        secondariesForProject(
+          d,
+          { projectManagerId: null, solutionArchitectId: null, solutionConsultantId: null },
+          peopleNameIndex,
+        ),
+      );
+    }
 
     // For lifetime hours we read HarvestProject breakdowns for projects in our set.
     const projectIdsInPlay = new Set<string>();
@@ -188,12 +218,18 @@ export function registerPeopleOverviewRoutes(
         }
       }
       for (const p of roleProjects) {
-        const isOnProject =
+        const fkMatch =
           p.ownerId === person.id ||
           p.projectManagerId === person.id ||
           p.solutionArchitectId === person.id ||
           p.solutionConsultantId === person.id;
-        if (!isOnProject) continue;
+        const secondaries = secondariesByProjectId.get(p.id);
+        const secondaryMatch =
+          !!secondaries &&
+          (secondaries.projectManager.some((r) => r.id === person.id) ||
+            secondaries.solutionArchitect.some((r) => r.id === person.id) ||
+            secondaries.solutionConsultant.some((r) => r.id === person.id));
+        if (!fkMatch && !secondaryMatch) continue;
         if (byProject.has(p.id)) continue;
         byProject.set(p.id, { project: p, weeklyPct: 0, allocatedPct: 0 });
       }

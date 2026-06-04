@@ -45,10 +45,27 @@ export function PersonDetailPage() {
   if (!person) return <div>Not found</div>;
 
   const projects = projectsQ.data ?? [];
-  const byRole = new Map<RoleSlug, Project[]>();
-  for (const { role, project } of projects) {
+  type RolePlacement = { project: Project; primary: boolean; last30DaysHours: number | null };
+  const byRole = new Map<RoleSlug, RolePlacement[]>();
+  for (const { role, primary, last30DaysHours, project } of projects) {
     if (!byRole.has(role)) byRole.set(role, []);
-    byRole.get(role)!.push(project);
+    byRole.get(role)!.push({ project, primary, last30DaysHours });
+  }
+  // Sort within each role section by (recent-hours-desc → primary-first → name).
+  // Projects with logged hours in the last 30 days bubble to the top so the
+  // "what's this person actively working on" signal reads first.
+  for (const list of byRole.values()) {
+    list.sort((a, b) => {
+      const aHas = (a.last30DaysHours ?? 0) > 0;
+      const bHas = (b.last30DaysHours ?? 0) > 0;
+      if (aHas !== bHas) return aHas ? -1 : 1;
+      if (aHas && bHas) {
+        const diff = (b.last30DaysHours ?? 0) - (a.last30DaysHours ?? 0);
+        if (diff !== 0) return diff;
+      }
+      if (a.primary !== b.primary) return a.primary ? -1 : 1;
+      return a.project.name.localeCompare(b.project.name);
+    });
   }
 
   const canEditWorkload = Boolean(viewer && (viewer.id === person.id || viewer.isAdmin));
@@ -57,9 +74,13 @@ export function PersonDetailPage() {
     <div className="page-stack">
       <PersonHeader person={person} />
       <WorkloadSection personId={person.id} editable={canEditWorkload} />
-      {ROLE_SECTIONS.map(({ role, label }) => (
-        <RoleSection key={role} label={label} projects={byRole.get(role) ?? []} />
-      ))}
+      {ROLE_SECTIONS.map(({ role, label }) => {
+        const placements = byRole.get(role) ?? [];
+        // Hide entirely when this person has no projects under that role —
+        // the empty-state row was noisier than informative.
+        if (placements.length === 0) return null;
+        return <RoleSection key={role} label={label} placements={placements} />;
+      })}
       <ReconciliationSection person={person} />
     </div>
   );
@@ -194,24 +215,38 @@ function PersonHeader({ person }: { person: Person }) {
   );
 }
 
-function RoleSection({ label, projects }: { label: string; projects: Project[] }) {
-  if (projects.length === 0) {
-    return (
-      <section className="section-card">
-        <h3 style={{ marginTop: 0 }}>{label}</h3>
-        <div className="text-sm text-gray-500">No projects as {label}.</div>
-      </section>
-    );
-  }
+function RoleSection({
+  label,
+  placements,
+}: {
+  label: string;
+  placements: Array<{ project: Project; primary: boolean; last30DaysHours: number | null }>;
+}) {
   return (
     <section className="section-card">
-      <h3 style={{ marginTop: 0 }}>{label} <span className="text-sm text-gray-500">({projects.length})</span></h3>
+      <h3 style={{ marginTop: 0 }}>
+        {label} <span className="text-sm text-gray-500">({placements.length})</span>
+      </h3>
       <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {projects.map((p) => (
-          <li key={p.id} className="person-project-row" style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '6px 0', borderBottom: '1px solid var(--ink-100)' }}>
+        {placements.map(({ project: p, primary, last30DaysHours }) => (
+          <li
+            key={`${p.id}-${primary ? 'primary' : 'secondary'}`}
+            className="person-project-row"
+            style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '6px 0', borderBottom: '1px solid var(--ink-100)' }}
+          >
             <Link to={`/projects/${p.id}`} className="text-torii hover:underline" style={{ flex: 1 }}>
               {p.name}
             </Link>
+            {last30DaysHours !== null && last30DaysHours > 0 && (
+              <span className="person-project-30d" title="Hours logged in the last 30 days">
+                30d: {last30DaysHours.toLocaleString('en-US', { maximumFractionDigits: 1 })}h
+              </span>
+            )}
+            {!primary && (
+              <span className="role-co-chip" title="Shared role with another person on Monday">
+                Co-{label.split(' ').map((w) => w[0]).join('').toUpperCase()}
+              </span>
+            )}
             <PhaseBadge phase={p.phase} />
             <StateBadge state={p.state} />
             {p.overBudget && (

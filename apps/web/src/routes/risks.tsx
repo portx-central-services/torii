@@ -9,28 +9,48 @@ import {
   type ProjectRiskUpdate,
   type ProjectRiskUpdateUpsert,
   type RagLevel,
+  type RiskListItem,
   type RiskState,
   type RiskType,
+  type StaleRiskRow,
 } from '../api/endpoints.js';
 import { useIsPM } from '../auth/AuthProvider.js';
 import { ApiError } from '../api/client.js';
+import { WeeklyUpdatePanel } from '../components/WeeklyUpdatePanel.js';
+
+const RAG_RANK: Record<RagLevel, number> = { Green: 0, Amber: 1, Red: 2 };
 
 export function RisksPage() {
+  const isPM = useIsPM();
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [focusProjectId, setFocusProjectId] = useState<string | null>(null);
+
   const risks = useQuery({
-    queryKey: ['risks'],
-    queryFn: () => endpoints.listRisks(),
+    queryKey: ['risks', 'with-stale'],
+    queryFn: () => endpoints.listRisksWithStale(),
   });
 
   if (risks.isLoading) {
     return <div className="text-gray-500">Loading risks…</div>;
   }
   if (risks.isError) {
-    return <div className="text-red-700">Unable to load risks: {(risks.error as Error).message}</div>;
+    return (
+      <div className="text-red-700">
+        Unable to load risks: {(risks.error as Error).message}
+      </div>
+    );
   }
 
-  const items = risks.data ?? [];
-  const redCount = items.filter((r) => r.ragLevel === 'Red').length;
-  const amberCount = items.filter((r) => r.ragLevel === 'Amber').length;
+  const atRisk = risks.data?.atRisk ?? [];
+  const stale = risks.data?.stale ?? [];
+  const redCount = atRisk.filter((r) => r.ragLevel === 'Red').length;
+  const amberCount = atRisk.filter((r) => r.ragLevel === 'Amber').length;
+  const groups = groupByCustomer(atRisk);
+
+  function openPanelFor(projectId: string | null) {
+    setFocusProjectId(projectId);
+    setPanelOpen(true);
+  }
 
   return (
     <div className="page-stack">
@@ -38,14 +58,25 @@ export function RisksPage() {
         <div className="page-header-title">
           <span className="overline">Delivery Health</span>
           <h1>Risks</h1>
-          <div className="page-sub">Weekly RAG cadence for every project currently off-Green.</div>
+          <div className="page-sub">Weekly RAG cadence, grouped by customer.</div>
         </div>
+        {isPM && (
+          <div className="page-header-actions">
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => openPanelFor(null)}
+            >
+              Update my week
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="kpi-row">
         <div className="kpi accent">
           <div className="kpi-label">At risk</div>
-          <div className="kpi-value">{items.length}</div>
+          <div className="kpi-value">{atRisk.length}</div>
           <div className="kpi-sub">Red or Amber this week</div>
         </div>
         <div className="kpi">
@@ -58,7 +89,7 @@ export function RisksPage() {
         </div>
       </div>
 
-      {items.length === 0 ? (
+      {atRisk.length === 0 ? (
         <div className="section-card empty">
           <div className="text-base text-gray-700 mb-2">All clear</div>
           <div className="text-sm text-gray-500">
@@ -66,13 +97,161 @@ export function RisksPage() {
           </div>
         </div>
       ) : (
-        <div className="risks-list">
-          {items.map((item) => (
-            <RiskProjectCard key={item.projectId} projectId={item.projectId} headerName={item.projectName} />
+        <div className="risks-groups">
+          {groups.map((group) => (
+            <CustomerGroup key={group.customerId ?? '__none__'} group={group} />
           ))}
         </div>
       )}
+
+      {stale.length > 0 && (
+        <StaleSection
+          rows={stale}
+          isPM={isPM}
+          onUpdateNow={(projectId) => openPanelFor(projectId)}
+        />
+      )}
+
+      <WeeklyUpdatePanel
+        open={panelOpen}
+        onClose={() => setPanelOpen(false)}
+        focusProjectId={focusProjectId}
+      />
     </div>
+  );
+}
+
+interface CustomerGroupData {
+  customerId: string | null;
+  customerName: string | null;
+  items: RiskListItem[];
+}
+
+function groupByCustomer(items: RiskListItem[]): CustomerGroupData[] {
+  const map = new Map<string, CustomerGroupData>();
+  for (const it of items) {
+    const key = it.customerId ?? '__none__';
+    let group = map.get(key);
+    if (!group) {
+      group = { customerId: it.customerId, customerName: it.customerName, items: [] };
+      map.set(key, group);
+    }
+    group.items.push(it);
+  }
+  return [...map.values()].sort((a, b) => {
+    if (a.customerId === null && b.customerId === null) return 0;
+    if (a.customerId === null) return 1;
+    if (b.customerId === null) return -1;
+    return (a.customerName ?? '').localeCompare(b.customerName ?? '');
+  });
+}
+
+function CustomerGroup({ group }: { group: CustomerGroupData }) {
+  const redCount = group.items.filter((it) => it.ragLevel === 'Red').length;
+  const amberCount = group.items.filter((it) => it.ragLevel === 'Amber').length;
+  return (
+    <section className="risks-group">
+      <header className="risks-group-head">
+        <h2 className="risks-group-name">
+          {group.customerId && group.customerName ? (
+            <Link to={`/customers/${group.customerId}`} className="text-torii hover:underline">
+              {group.customerName}
+            </Link>
+          ) : (
+            <span className="dashboard-em">No customer</span>
+          )}
+        </h2>
+        <span className="risks-group-count">
+          {group.items.length} project{group.items.length === 1 ? '' : 's'}
+          {redCount > 0 && <> · <span className="kpi-danger">{redCount} red</span></>}
+          {amberCount > 0 && <> · <span className="kpi-warning">{amberCount} amber</span></>}
+        </span>
+      </header>
+      <div className="risks-list">
+        {group.items.map((item) => (
+          <RiskProjectCard
+            key={item.projectId}
+            projectId={item.projectId}
+            headerName={item.projectName}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function StaleSection({
+  rows,
+  isPM,
+  onUpdateNow,
+}: {
+  rows: StaleRiskRow[];
+  isPM: boolean;
+  onUpdateNow: (projectId: string) => void;
+}) {
+  return (
+    <section className="section-card">
+      <h2 style={{ marginTop: 0 }}>Stale updates</h2>
+      <div className="text-sm text-gray-500" style={{ marginBottom: 12 }}>
+        Projects whose most recent update is more than 2 weeks old, or that have no updates yet.
+      </div>
+      <table className="stale-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid var(--ink-200)', textAlign: 'left' }}>
+            <th style={{ padding: '8px 8px' }}>Project</th>
+            <th style={{ padding: '8px 8px' }}>Customer</th>
+            <th style={{ padding: '8px 8px' }}>Last RAG</th>
+            <th style={{ padding: '8px 8px' }}>Last week</th>
+            <th style={{ padding: '8px 8px' }}>Stale</th>
+            {isPM && <th aria-label="Actions" />}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.projectId} style={{ borderBottom: '1px solid var(--ink-100)' }}>
+              <td style={{ padding: '8px 8px' }}>
+                <Link to={`/projects/${row.projectId}`} className="text-torii hover:underline">
+                  {row.projectName}
+                </Link>
+              </td>
+              <td style={{ padding: '8px 8px' }}>
+                {row.customerId && row.customerName ? (
+                  <Link to={`/customers/${row.customerId}`} className="text-torii hover:underline">
+                    {row.customerName}
+                  </Link>
+                ) : (
+                  <span className="dashboard-em">—</span>
+                )}
+              </td>
+              <td style={{ padding: '8px 8px' }}>
+                {row.lastRagLevel ? <RagChip level={row.lastRagLevel} /> : <span className="dashboard-em">—</span>}
+              </td>
+              <td style={{ padding: '8px 8px' }}>
+                {row.lastWeekOf ?? <span className="dashboard-em">—</span>}
+              </td>
+              <td style={{ padding: '8px 8px' }}>
+                {row.weeksSinceLastUpdate === null ? (
+                  <span className="stale-chip stale-chip-never">never</span>
+                ) : (
+                  <span className="stale-chip">{row.weeksSinceLastUpdate}w ago</span>
+                )}
+              </td>
+              {isPM && (
+                <td style={{ padding: '8px 8px', textAlign: 'right' }}>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => onUpdateNow(row.projectId)}
+                  >
+                    Update now
+                  </button>
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 }
 
@@ -80,10 +259,8 @@ export function RiskProjectCard({
   projectId,
   headerName,
   /**
-   * When true (the default), the heading is a link to the project's detail page —
-   * useful on `/risks` where the card is the only entry point. Set to false when
-   * embedding the card ON the project's own detail page, since a self-link there
-   * is redundant noise.
+   * When true (the default), the heading is a link to the project's detail page.
+   * Set to false when embedding the card on the project's own detail page.
    */
   linkToProject = true,
 }: {
@@ -100,10 +277,8 @@ export function RiskProjectCard({
   const updates = history.data ?? [];
   const current = updates[0];
   const previous = updates[1];
-  const olderHistory = updates.slice(1);
 
   const [editing, setEditing] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
 
   return (
     <section className="section-card">
@@ -127,10 +302,6 @@ export function RiskProjectCard({
       {history.isLoading ? (
         <div className="text-sm text-gray-500">Loading history…</div>
       ) : editing && isPM ? (
-        // Editing comes first: when the PM clicks "Add the first" on a project with
-        // no prior updates, `current` is still undefined — checking `!current` before
-        // `editing` would short-circuit back to the empty state instead of opening
-        // the form. RiskEditForm handles `initial: undefined` with sensible defaults.
         <RiskEditForm
           projectId={projectId}
           initial={current}
@@ -155,27 +326,7 @@ export function RiskProjectCard({
           )}
         </div>
       ) : (
-        <>
-          <CurrentRiskCard update={current} previous={previous ?? null} />
-          {olderHistory.length > 0 && (
-            <div className="risk-history">
-              <button
-                type="button"
-                className="text-sm text-gray-600 hover:underline"
-                onClick={() => setShowHistory((v) => !v)}
-              >
-                {showHistory ? 'Hide previous weeks' : `Show previous weeks (${olderHistory.length})`}
-              </button>
-              {showHistory && (
-                <div className="risk-history-list">
-                  {olderHistory.map((u) => (
-                    <PastRiskCard key={u.id} update={u} />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </>
+        <CurrentRiskCard update={current} previous={previous ?? null} history={updates} />
       )}
     </section>
   );
@@ -184,15 +335,18 @@ export function RiskProjectCard({
 function CurrentRiskCard({
   update,
   previous,
+  history,
 }: {
   update: ProjectRiskUpdate;
   previous: ProjectRiskUpdate | null;
+  history: ProjectRiskUpdate[];
 }) {
   return (
     <div className="risk-card">
       <div className="risk-card-head">
         <RagChip level={update.ragLevel} />
-        <RagArrow current={update.ragLevel} previous={previous?.ragLevel ?? null} />
+        <TrendChip current={update.ragLevel} previous={previous?.ragLevel ?? null} />
+        <WeeksStuckChip history={history} />
         <span className="risk-card-week">Week of {update.weekOf}</span>
         <RiskStateBadge state={update.state} />
         <div className="risk-card-types">
@@ -203,13 +357,8 @@ function CurrentRiskCard({
           ))}
         </div>
       </div>
-      <RiskBody update={update} />
-      <div className="risk-card-prev-week text-xs text-gray-500 mt-2">
-        {previous
-          ? `Last week: ${previous.ragLevel} / ${previous.state}`
-          : 'Last week: no update'}
-      </div>
-      <div className="text-xs text-gray-500 mt-1">
+      <RiskDetailTable update={update} history={history} />
+      <div className="text-xs text-gray-500 mt-2">
         Last updated by {update.authorName ?? update.authorId} at{' '}
         {new Date(update.updatedAt).toLocaleString()}
       </div>
@@ -217,75 +366,154 @@ function CurrentRiskCard({
   );
 }
 
-function PastRiskCard({ update }: { update: ProjectRiskUpdate }) {
-  const [expanded, setExpanded] = useState(false);
+/**
+ * Two-column label/value table. The Description / History row carries:
+ *   - the standing `description` text
+ *   - a "This week:" line with the current week's `latestUpdate`
+ *   - an inline "View N earlier weeks" disclosure expanding to per-week sub-tables
+ */
+function RiskDetailTable({
+  update,
+  history,
+}: {
+  update: ProjectRiskUpdate;
+  history: ProjectRiskUpdate[];
+}) {
+  const [showHistory, setShowHistory] = useState(false);
+  const olderHistory = history.slice(1);
   return (
-    <div className="risk-card past">
-      <button
-        type="button"
-        className="risk-card-head as-button"
-        onClick={() => setExpanded((v) => !v)}
-      >
+    <dl className="risk-table">
+      <dt>Description / History</dt>
+      <dd>
+        <FieldText value={update.description} />
+        {update.latestUpdate?.trim() && (
+          <div className="risk-table-this-week">
+            <span className="risk-table-this-week-label">This week:</span> {update.latestUpdate}
+          </div>
+        )}
+        {olderHistory.length > 0 && (
+          <div className="risk-table-history">
+            <button
+              type="button"
+              className="text-sm text-gray-600 hover:underline"
+              onClick={() => setShowHistory((v) => !v)}
+            >
+              {showHistory
+                ? 'Hide earlier weeks'
+                : `View ${olderHistory.length} earlier week${olderHistory.length === 1 ? '' : 's'}`}
+            </button>
+            {showHistory && (
+              <div className="risk-history-list">
+                {olderHistory.map((u) => (
+                  <PastRiskRow key={u.id} update={u} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </dd>
+
+      <dt>Go-to-green plan</dt>
+      <dd><FieldText value={update.goToGreenPlan} /></dd>
+
+      <dt>Next steps</dt>
+      <dd><FieldText value={update.nextSteps} /></dd>
+
+      <dt>Action Requested</dt>
+      <dd><FieldText value={update.actionRequested} /></dd>
+    </dl>
+  );
+}
+
+function FieldText({ value }: { value: string }) {
+  if (!value?.trim()) return <span className="text-gray-400">—</span>;
+  return <span className="risk-field-value">{value}</span>;
+}
+
+function PastRiskRow({ update }: { update: ProjectRiskUpdate }) {
+  return (
+    <details className="risk-history-row">
+      <summary>
         <RagChip level={update.ragLevel} />
         <span className="risk-card-week">Week of {update.weekOf}</span>
         <RiskStateBadge state={update.state} />
-        <span className="ml-auto text-xs text-gray-500">{expanded ? '▾' : '▸'}</span>
-      </button>
-      {expanded && <RiskBody update={update} />}
-    </div>
+      </summary>
+      <dl className="risk-table risk-table-nested">
+        <dt>Description / History</dt>
+        <dd>
+          <FieldText value={update.description} />
+          {update.latestUpdate?.trim() && (
+            <div className="risk-table-this-week">
+              <span className="risk-table-this-week-label">This week:</span> {update.latestUpdate}
+            </div>
+          )}
+        </dd>
+        <dt>Go-to-green plan</dt>
+        <dd><FieldText value={update.goToGreenPlan} /></dd>
+        <dt>Next steps</dt>
+        <dd><FieldText value={update.nextSteps} /></dd>
+        <dt>Action Requested</dt>
+        <dd><FieldText value={update.actionRequested} /></dd>
+      </dl>
+    </details>
   );
 }
 
-function RiskBody({ update }: { update: ProjectRiskUpdate }) {
-  return (
-    <div className="risk-body">
-      <RiskField label="Description / History" value={update.description} />
-      <RiskField label="Go-to-Green plan" value={update.goToGreenPlan} />
-      <RiskField label="Latest update" value={update.latestUpdate} />
-      <RiskField label="Next steps" value={update.nextSteps} />
-      <RiskField label="Action requested" value={update.actionRequested} />
-    </div>
-  );
-}
-
-function RiskField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="risk-field">
-      <div className="risk-field-label">{label}</div>
-      <div className="risk-field-value">{value?.trim() ? value : <span className="text-gray-400">—</span>}</div>
-    </div>
-  );
-}
-
-function RagChip({ level }: { level: RagLevel }) {
-  return <span className={`rag-chip rag-${level.toLowerCase()}`}>{level}</span>;
-}
-
-function RagArrow({
+function TrendChip({
   current,
   previous,
 }: {
   current: RagLevel;
   previous: RagLevel | null;
 }) {
-  if (!previous) return null;
-  const rank: Record<RagLevel, number> = { Green: 0, Amber: 1, Red: 2 };
-  const delta = rank[current] - rank[previous];
-  if (delta === 0) {
+  if (previous === null) {
+    return <span className="trend-chip trend-chip-new">New</span>;
+  }
+  if (previous === 'Green' && current !== 'Green') {
+    return <span className="trend-chip trend-chip-worse">Returned from Green</span>;
+  }
+  if (current === previous) {
+    return <span className="trend-chip trend-chip-same">Same</span>;
+  }
+  const delta = RAG_RANK[current] - RAG_RANK[previous];
+  if (delta > 0) {
     return (
-      <span className="rag-arrow" title={`No change from last week (${previous})`}>
-        =
+      <span className="trend-chip trend-chip-worse" title={`${previous} → ${current}`}>
+        ↑ Worsened from {previous}
       </span>
     );
   }
-  // delta > 0 means worse (Green → Amber → Red).
-  const symbol = delta > 0 ? '▲' : '▼';
-  const tone = delta > 0 ? 'rag-arrow-worse' : 'rag-arrow-better';
   return (
-    <span className={`rag-arrow ${tone}`} title={`${previous} → ${current}`}>
-      {symbol} {previous} → {current}
+    <span className="trend-chip trend-chip-better" title={`${previous} → ${current}`}>
+      ↓ Improved from {previous}
     </span>
   );
+}
+
+/**
+ * Counts consecutive weeks at the current non-Green level, walking history
+ * backward from the most recent entry. Renders nothing when the streak is < 2
+ * (a 1-week-old red is noise, not signal).
+ */
+function WeeksStuckChip({ history }: { history: ProjectRiskUpdate[] }) {
+  if (history.length === 0) return null;
+  const current = history[0]!;
+  if (current.ragLevel === 'Green') return null;
+  let streak = 1;
+  for (let i = 1; i < history.length; i++) {
+    if (history[i]!.ragLevel === current.ragLevel) streak += 1;
+    else break;
+  }
+  if (streak < 2) return null;
+  return (
+    <span className={`trend-chip trend-chip-stuck rag-${current.ragLevel.toLowerCase()}`}>
+      Stuck {streak} weeks at {current.ragLevel}
+    </span>
+  );
+}
+
+function RagChip({ level }: { level: RagLevel }) {
+  return <span className={`rag-chip rag-${level.toLowerCase()}`}>{level}</span>;
 }
 
 function RiskStateBadge({ state }: { state: RiskState }) {
@@ -406,10 +634,10 @@ function RiskEditForm({
       </div>
 
       <TextAreaField label="Description / History" value={description} onChange={setDescription} />
-      <TextAreaField label="Go-to-Green plan" value={goToGreenPlan} onChange={setGoToGreenPlan} />
-      <TextAreaField label="Latest update" value={latestUpdate} onChange={setLatestUpdate} />
+      <TextAreaField label="Go-to-green plan" value={goToGreenPlan} onChange={setGoToGreenPlan} />
+      <TextAreaField label="This week" value={latestUpdate} onChange={setLatestUpdate} />
       <TextAreaField label="Next steps" value={nextSteps} onChange={setNextSteps} />
-      <TextAreaField label="Action requested" value={actionRequested} onChange={setActionRequested} />
+      <TextAreaField label="Action Requested" value={actionRequested} onChange={setActionRequested} />
 
       {err && (
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded p-2">{err}</div>
@@ -447,3 +675,4 @@ function TextAreaField({
     </label>
   );
 }
+

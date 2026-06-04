@@ -103,12 +103,22 @@ body {
 .sidebar-nav-item {
   display: flex;
   align-items: center;
+  gap: 10px;
   padding: 10px 12px;
   border-radius: var(--radius-md);
   color: var(--ink-300);
   text-decoration: none;
   font-size: 14px;
   font-weight: 500;
+}
+
+/* Lucide-style 18px inline-SVG icons next to nav labels.
+   `currentColor` inherits the sidebar-nav-item color so hover/active states
+   propagate to the icon stroke automatically. */
+.nav-icon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
 }
 
 .sidebar-nav-item:hover {
@@ -2403,6 +2413,127 @@ a.dashboard-rag-tile:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* Two tiles surfacing trailing-7d / trailing-30d Harvest hours summed across
+   every Harvest project this person logged on (including customer-only). */
+.workload-totals-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.workload-total-tile {
+  border: 1px solid var(--ink-200);
+  border-radius: var(--radius-md, 8px);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--paper);
+}
+
+.workload-total-tile-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-500);
+}
+
+.workload-total-tile-value {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.workload-total-tile-sub {
+  font-size: 11px;
+  color: var(--ink-500);
+}
+
+/* 7-bar inline chart inside the "Last 7 days" tile. */
+.workload-7d-chart {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  align-items: end;
+  margin-top: 6px;
+  height: 48px;
+}
+
+.workload-7d-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  height: 100%;
+}
+
+.workload-7d-bar-track {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column-reverse;
+  background: var(--ink-100, #e5e7eb);
+  border-radius: 3px;
+  overflow: hidden;
+  min-height: 1px;
+}
+
+.workload-7d-bar-fill {
+  width: 100%;
+  background: var(--portx-gradient, #0ea5e9);
+  border-radius: 3px;
+  transition: height 0.18s ease-out;
+}
+
+.workload-7d-bar-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-500);
+}
+
+/* Per-project breakdown inside the "Last 7 days" tile. */
+.workload-7d-projects {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.workload-7d-project-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.workload-7d-project-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+  color: var(--ink-700, #374151);
+}
+
+.workload-7d-project-hours {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--ink-900, #111827);
+}
+
+.workload-7d-project-other .workload-7d-project-name {
+  color: var(--ink-500);
+  font-style: italic;
+}
+
 .workload-table {
   width: 100%;
   border-collapse: collapse;
@@ -2631,4 +2762,348 @@ a.dashboard-rag-tile:hover {
 }
 .people-project-row {
   background: rgba(255, 255, 255, 0.5);
+}
+
+/* ---------- Risks page (improved UX) ---------- */
+
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.risks-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.risks-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.risks-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--ink-200);
+  padding-bottom: 6px;
+}
+
+.risks-group-name {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.risks-group-count {
+  font-size: 11px;
+  color: var(--ink-500);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* 2-column label/value table inside RiskProjectCard. */
+.risk-table {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 6px 16px;
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+.risk-table dt {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-500);
+  padding-top: 2px;
+}
+.risk-table dd {
+  margin: 0;
+  color: var(--ink-900, #111827);
+}
+.risk-table dt + dd {
+  border-bottom: 1px solid var(--ink-100, #e5e7eb);
+  padding-bottom: 8px;
+}
+.risk-table dt {
+  border-bottom: 1px solid var(--ink-100, #e5e7eb);
+  padding-bottom: 8px;
+}
+.risk-table > *:nth-last-child(-n+2) {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.risk-table-this-week {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: var(--ink-50, #f9fafb);
+  border-radius: var(--radius-sm, 4px);
+  font-size: 12px;
+  color: var(--ink-700, #374151);
+}
+.risk-table-this-week-label {
+  font-weight: 700;
+  color: var(--ink-500);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+}
+.risk-table-history {
+  margin-top: 8px;
+}
+
+.risk-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.risk-history-row summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+}
+.risk-history-row summary::-webkit-details-marker { display: none; }
+.risk-history-row[open] summary {
+  border-bottom: 1px solid var(--ink-100);
+}
+.risk-table-nested {
+  grid-template-columns: 140px 1fr;
+  font-size: 12px;
+  padding-top: 4px;
+}
+
+/* Trend chips next to the RAG. */
+.trend-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.trend-chip-new {
+  background: #e0f2fe;
+  color: #075985;
+}
+.trend-chip-same {
+  background: var(--ink-100, #e5e7eb);
+  color: var(--ink-700, #374151);
+}
+.trend-chip-worse {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.trend-chip-better {
+  background: #d1fae5;
+  color: #065f46;
+}
+.trend-chip-stuck {
+  background: #fef3c7;
+  color: #92400e;
+}
+.trend-chip-stuck.rag-red {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+/* Stale-updates section table. */
+.stale-table th {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-500);
+}
+.stale-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #fef3c7;
+  color: #92400e;
+}
+.stale-chip-never {
+  background: var(--ink-100, #e5e7eb);
+  color: var(--ink-700, #374151);
+}
+
+/* ---------- Weekly update side panel ---------- */
+
+.weekly-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  z-index: 90;
+}
+
+.weekly-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(560px, 100vw);
+  background: var(--paper);
+  border-left: 1px solid var(--ink-200);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  z-index: 100;
+}
+
+.weekly-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--ink-200);
+}
+.weekly-panel-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.weekly-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.weekly-panel-caught-up {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--ink-500);
+}
+
+.weekly-panel-row {
+  border: 1px solid var(--ink-200);
+  border-radius: var(--radius-md, 8px);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--paper);
+}
+.weekly-panel-row-focused {
+  border-color: #0ea5e9;
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.15);
+}
+
+.weekly-panel-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-weight: 600;
+}
+.weekly-panel-customer {
+  font-size: 11px;
+  color: var(--ink-500);
+  text-decoration: none;
+}
+.weekly-panel-customer:hover {
+  text-decoration: underline;
+}
+
+.weekly-panel-row-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+.weekly-panel-row-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--ink-500);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.weekly-panel-row-grid select {
+  width: 100%;
+}
+
+.weekly-panel-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--ink-500);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.weekly-panel-row-text input {
+  width: 100%;
+}
+
+.weekly-panel-row-error {
+  background: #fef2f2;
+  color: #991b1b;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 12px;
+}
+
+.weekly-panel-row-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.weekly-panel-foot {
+  padding: 14px 20px;
+  border-top: 1px solid var(--ink-200);
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Multi-person role row on the project detail Team facets. */
+.team-row-people {
+  display: inline;
+}
+
+/* "Co-SA" / "Co-PM" chip on the person-detail page for non-primary role placements. */
+.role-co-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #ede9fe;
+  color: #5b21b6;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* 30-day hours chip next to a project name on the person detail page. */
+.person-project-30d {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #d1fae5;
+  color: #065f46;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }

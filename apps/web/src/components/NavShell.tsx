@@ -1,6 +1,16 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider.js';
 import { TopbarSearch } from './TopbarSearch.js';
+import {
+  CapacityIcon,
+  CustomersIcon,
+  DashboardIcon,
+  PeopleIcon,
+  ProjectsIcon,
+  RisksIcon,
+  TimelineIcon,
+  TrackersIcon,
+} from './NavIcons.js';
 import toriiLogo from '../assets/torii-logo.svg';
 
 export function NavShell() {
@@ -43,50 +53,58 @@ export function NavShell() {
             end
             className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
           >
-            Dashboard
+            <DashboardIcon className="nav-icon" />
+            <span>Dashboard</span>
           </NavLink>
           <NavLink
             to="/timeline"
             className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
           >
-            Timeline
+            <TimelineIcon className="nav-icon" />
+            <span>Timeline</span>
           </NavLink>
           <NavLink
             to="/risks"
             className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
           >
-            Risks
+            <RisksIcon className="nav-icon" />
+            <span>Risks</span>
           </NavLink>
           <NavLink
             to="/customers"
             className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
           >
-            Customers
+            <CustomersIcon className="nav-icon" />
+            <span>Customers</span>
           </NavLink>
           <NavLink
             to="/projects"
             className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
           >
-            Projects
+            <ProjectsIcon className="nav-icon" />
+            <span>Projects</span>
           </NavLink>
           <NavLink
             to="/people"
             className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
           >
-            People
+            <PeopleIcon className="nav-icon" />
+            <span>People</span>
           </NavLink>
           <NavLink
             to="/capacity"
             className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
           >
-            Capacity
+            <CapacityIcon className="nav-icon" />
+            <span>Capacity</span>
           </NavLink>
           {user?.isAdmin && (
             <NavLink
               to="/trackers"
               className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
             >
-              Trackers
+              <TrackersIcon className="nav-icon" />
+              <span>Trackers</span>
             </NavLink>
           )}
         </nav>
