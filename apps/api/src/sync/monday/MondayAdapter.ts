@@ -246,6 +246,10 @@ function firstUrl(text: string): string | undefined {
 /**
  * Map recognized Monday columns to `details.*` values. Link columns yield the
  * extracted URL; other columns yield trimmed text. Empty values are omitted.
+ *
+ * `details.fintech_parent` is handled by a separate explicit precedence pass
+ * (see below) because two related Monday columns ("Fintech Parent" and "Fintech")
+ * both map to the same key — see design D6.
  */
 function extractDetails(item: MondayItem): Record<string, string> {
   const details: Record<string, string> = {};
@@ -265,7 +269,24 @@ function extractDetails(item: MondayItem): Record<string, string> {
       details[key] = raw;
     }
   }
+  // Fintech Parent / Fintech: PortX's Monday board has two related columns;
+  // "Fintech Parent" is preferred but occasionally only "Fintech" is set.
+  // Explicit precedence so the outcome is deterministic regardless of column
+  // iteration order (design D6). Both columns are text — no URL extraction.
+  const fintechParent = readNonEmptyColumn(item, 'Fintech Parent');
+  const fintech = fintechParent ?? readNonEmptyColumn(item, 'Fintech');
+  if (fintech) details.fintech_parent = fintech;
   return details;
+}
+
+/** Look up a column by title and return its trimmed display_value/text, or undefined when absent or empty. */
+function readNonEmptyColumn(item: MondayItem, title: string): string | undefined {
+  for (const col of item.column_values ?? []) {
+    if (col.column?.title !== title) continue;
+    const raw = col.display_value?.trim() || col.text?.trim();
+    if (raw) return raw;
+  }
+  return undefined;
 }
 
 function extractProjectName(item: MondayItem): string {

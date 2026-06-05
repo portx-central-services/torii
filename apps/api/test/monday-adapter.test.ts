@@ -741,5 +741,58 @@ describe('MondayAdapter', () => {
       const [item] = await adapter.listProjects();
       expect(item!.details).toBeUndefined();
     });
+
+    it('extracts "Fintech Parent" into details.fintech_parent', async () => {
+      const adapter = adapterReturning([
+        { id: 'c1', text: 'Acme Holdings', column: { title: 'Fintech Parent' } },
+      ]);
+      const [item] = await adapter.listProjects();
+      expect(item!.details).toEqual({ fintech_parent: 'Acme Holdings' });
+    });
+
+    it('falls back to "Fintech" when "Fintech Parent" is empty', async () => {
+      const adapter = adapterReturning([
+        { id: 'c1', text: '', column: { title: 'Fintech Parent' } },
+        { id: 'c2', text: 'Beta Co', column: { title: 'Fintech' } },
+      ]);
+      const [item] = await adapter.listProjects();
+      expect(item!.details).toEqual({ fintech_parent: 'Beta Co' });
+    });
+
+    it('falls back to "Fintech" when "Fintech Parent" column is absent', async () => {
+      const adapter = adapterReturning([
+        { id: 'c1', text: 'Beta Co', column: { title: 'Fintech' } },
+      ]);
+      const [item] = await adapter.listProjects();
+      expect(item!.details).toEqual({ fintech_parent: 'Beta Co' });
+    });
+
+    it('prefers "Fintech Parent" over "Fintech" when both are set', async () => {
+      const adapter = adapterReturning([
+        { id: 'c1', text: 'Acme Holdings', column: { title: 'Fintech Parent' } },
+        { id: 'c2', text: 'Acme', column: { title: 'Fintech' } },
+      ]);
+      const [item] = await adapter.listProjects();
+      expect(item!.details).toEqual({ fintech_parent: 'Acme Holdings' });
+    });
+
+    it('precedence holds regardless of column iteration order', async () => {
+      // "Fintech" appears first in the response — Fintech Parent must still win.
+      const adapter = adapterReturning([
+        { id: 'c1', text: 'Acme', column: { title: 'Fintech' } },
+        { id: 'c2', text: 'Acme Holdings', column: { title: 'Fintech Parent' } },
+      ]);
+      const [item] = await adapter.listProjects();
+      expect(item!.details).toEqual({ fintech_parent: 'Acme Holdings' });
+    });
+
+    it('omits details.fintech_parent when both columns are empty', async () => {
+      const adapter = adapterReturning([
+        { id: 'c1', text: '   ', column: { title: 'Fintech Parent' } },
+        { id: 'c2', text: '', column: { title: 'Fintech' } },
+      ]);
+      const [item] = await adapter.listProjects();
+      expect(item!.details).toBeUndefined();
+    });
   });
 });

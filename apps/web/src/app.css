@@ -3107,3 +3107,315 @@ a.dashboard-rag-tile:hover {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+
+/* --------------------------------------------------------------------------
+ * Insights page (/insights)
+ *
+ * Two-pane layout: scrollable metrics column on the left, sticky chat pane on
+ * the right. Below 960px the panes stack so the chat sits under the metrics.
+ * -------------------------------------------------------------------------- */
+.insights-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: 24px;
+  align-items: start;
+}
+.insights-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0; /* allow tables to scroll inside grid cell */
+}
+.insights-section {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 16px;
+}
+.insights-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.insights-section-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #111827;
+}
+.insights-filter {
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  min-width: 200px;
+}
+.insights-table-wrap {
+  overflow-x: auto;
+}
+.insights-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.insights-table th,
+.insights-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #f3f4f6;
+  white-space: nowrap;
+  text-align: left;
+}
+.insights-table th {
+  font-weight: 600;
+  color: #374151;
+  background: #f9fafb;
+  cursor: pointer;
+  user-select: none;
+}
+.insights-table th.insights-sort.sorted-asc::after {
+  content: ' ↑';
+  color: #6b7280;
+}
+.insights-table th.insights-sort.sorted-desc::after {
+  content: ' ↓';
+  color: #6b7280;
+}
+.insights-table td.insights-num,
+.insights-table th.insights-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.insights-overcommit-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #fee2e2;
+  color: #991b1b;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* KPI "good" variant — green, used on Recovered this week. */
+.kpi-good {
+  color: #065f46;
+}
+
+/* Trend charts — two compact bar charts side-by-side. */
+.insights-trend-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.insights-trend-card {
+  background: #f9fafb;
+  border-radius: 8px;
+  padding: 12px;
+}
+.insights-trend-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
+}
+.insights-trend-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 100px;
+}
+.insights-trend-bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  justify-content: flex-end;
+}
+.insights-trend-bar {
+  width: 100%;
+  background: #6366f1;
+  border-radius: 3px 3px 0 0;
+  min-height: 2px;
+}
+.insights-trend-stack {
+  width: 100%;
+  display: flex;
+  flex-direction: column-reverse; /* green at bottom, red at top */
+  border-radius: 3px 3px 0 0;
+  overflow: hidden;
+  min-height: 2px;
+}
+.insights-trend-label {
+  font-size: 9px;
+  color: #6b7280;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Chat pane on the right of the insights layout. */
+.insights-chat-pane {
+  position: sticky;
+  top: 16px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 120px);
+  min-height: 480px;
+  overflow: hidden;
+}
+.insights-chat-header {
+  padding: 12px 14px;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  background: #f9fafb;
+}
+.insights-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.insights-chat-empty {
+  padding: 14px;
+  font-size: 12px;
+  color: #6b7280;
+}
+.insights-chat-suggested {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.insights-chat-suggested-label {
+  font-size: 12px;
+  color: #6b7280;
+  margin: 0 0 4px 0;
+}
+.insights-chat-suggested-btn {
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  padding: 6px 12px;
+  text-align: left;
+  font-size: 12px;
+  color: #374151;
+  cursor: pointer;
+}
+.insights-chat-suggested-btn:hover {
+  background: #e5e7eb;
+}
+.insights-chat-message-user,
+.insights-chat-message-assistant {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.insights-chat-message-user {
+  align-self: flex-end;
+  max-width: 90%;
+  background: #eef2ff;
+  color: #1e1b4b;
+  border-radius: 12px 12px 2px 12px;
+  padding: 8px 12px;
+}
+.insights-chat-message-assistant {
+  align-self: flex-start;
+  max-width: 100%;
+}
+.insights-chat-message-assistant .insights-chat-text {
+  background: #f3f4f6;
+  color: #111827;
+  border-radius: 12px 12px 12px 2px;
+  padding: 8px 12px;
+  white-space: pre-wrap;
+}
+.insights-chat-message-assistant .insights-chat-text a {
+  color: #4338ca;
+  text-decoration: underline;
+}
+.insights-chat-message-assistant .insights-chat-text code {
+  background: #e5e7eb;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+}
+.insights-chat-tool-line {
+  font-size: 11px;
+  font-style: italic;
+  color: #6b7280;
+  padding-left: 4px;
+}
+.insights-chat-thinking {
+  font-style: italic;
+  color: #9ca3af;
+  font-size: 12px;
+  padding-left: 12px;
+}
+.insights-chat-error {
+  color: #b91c1c;
+  font-size: 12px;
+  padding: 4px 12px;
+}
+.insights-chat-input-row {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
+}
+.insights-chat-input {
+  flex: 1;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.insights-chat-input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px #c7d2fe;
+}
+.insights-chat-send {
+  min-width: 64px;
+}
+
+@media (max-width: 960px) {
+  .insights-page {
+    grid-template-columns: 1fr;
+  }
+  .insights-chat-pane {
+    position: static;
+    height: 600px;
+  }
+  .insights-trend-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Project-type chip on the Insights page. */
+.insights-type-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.insights-type-direct {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+.insights-type-fintech {
+  background: #fde68a;
+  color: #78350f;
+}

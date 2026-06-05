@@ -40,6 +40,9 @@ const EnvSchema = z
 
     TRACKER_TOKEN_KEY: z.string().default(''),
     ENABLE_SYNC_CRON: z.string().default('false').transform(boolFlag),
+
+    ANTHROPIC_API_KEY: z.string().default(''),
+    INSIGHTS_CHAT_MODEL: z.string().default('claude-sonnet-4-6'),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === 'production') {

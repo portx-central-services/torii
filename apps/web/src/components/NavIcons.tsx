@@ -95,6 +95,18 @@ export function CapacityIcon(p: IconProps) {
   );
 }
 
+export function InsightsIcon(p: IconProps) {
+  // Bar chart with rising trend — reads as "analytics / portfolio insight".
+  return (
+    <svg {...base} {...p}>
+      <path d="M3 3v18h18" />
+      <rect x="7" y="13" width="3" height="6" rx="0.5" />
+      <rect x="12" y="9" width="3" height="10" rx="0.5" />
+      <rect x="17" y="5" width="3" height="14" rx="0.5" />
+    </svg>
+  );
+}
+
 export function TrackersIcon(p: IconProps) {
   // Plug / connector — reads as "external integration".
   return (

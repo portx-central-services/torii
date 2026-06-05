@@ -202,6 +202,34 @@ describe('projects routes', () => {
       const body = r.json() as Record<string, unknown>;
       expect(body.trackerRaw).toBeNull();
     });
+
+    it('derives projectType=fintech when details.fintech_parent is set', async () => {
+      userRef.current = viewerUser;
+      db.project.findUnique.mockResolvedValue({
+        ...baseProject(),
+        details: { fintech_parent: 'Acme Holdings' },
+        allocations: [],
+      });
+
+      const r = await app.inject({ method: 'GET', url: '/api/projects/proj-1' });
+      expect(r.statusCode).toBe(200);
+      const body = r.json() as Record<string, unknown>;
+      expect(body.projectType).toBe('fintech');
+    });
+
+    it('derives projectType=direct when details.fintech_parent is absent', async () => {
+      userRef.current = viewerUser;
+      db.project.findUnique.mockResolvedValue({
+        ...baseProject(),
+        details: { project_manager: 'Dana Lee' },
+        allocations: [],
+      });
+
+      const r = await app.inject({ method: 'GET', url: '/api/projects/proj-1' });
+      expect(r.statusCode).toBe(200);
+      const body = r.json() as Record<string, unknown>;
+      expect(body.projectType).toBe('direct');
+    });
   });
 
   describe('PATCH /api/projects/:id details', () => {

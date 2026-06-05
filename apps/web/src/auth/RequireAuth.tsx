@@ -30,3 +30,20 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
   }
   return <>{children}</>;
 }
+
+/**
+ * Gate for routes that PMs and admins can access. Viewers (non-admin, non-PM)
+ * are blocked. Used by `/insights` — the chat endpoint runs up an Anthropic
+ * bill on PortX's account, so we limit it to roles likely to extract value.
+ */
+export function RequirePM({ children }: { children: ReactNode }) {
+  const { state, user } = useAuth();
+  if (state === 'loading') return <div className="p-8 text-gray-500">Loading...</div>;
+  if (state === 'unauthenticated') return <Navigate to="/signin" replace />;
+  if (user?.role !== 'PM' && !user?.isAdmin) {
+    return (
+      <div className="p-8 text-red-700">You do not have permission to view this page.</div>
+    );
+  }
+  return <>{children}</>;
+}

@@ -69,6 +69,7 @@ export const PROJECT_DETAIL_KEYS = [
   'finance_use_case',
   'use_case_group',
   'customer_status',
+  'fintech_parent',
 ] as const;
 
 export type ProjectDetailKey = (typeof PROJECT_DETAIL_KEYS)[number];
@@ -94,6 +95,8 @@ export const ProjectDetailsSchema = z
     finance_use_case: detailText,
     use_case_group: detailText,
     customer_status: detailText,
+    /** Set when the project is a fintech engagement. Sourced from Monday's "Fintech Parent" column (falls back to "Fintech"). Drives the derived `projectType: 'fintech' | 'direct'`. */
+    fintech_parent: detailText,
   })
   .strict();
 
@@ -592,3 +595,76 @@ export const DashboardSummarySchema = z.object({
   phaseCounts: z.record(PhaseSchema, z.number().int().nonnegative()),
 });
 export type DashboardSummary = z.infer<typeof DashboardSummarySchema>;
+
+/** Response shape for `GET /api/insights/overview`. Drives the Insights page +
+ *  the chat endpoint's `getInsightsOverview` tool. */
+export const InsightsOverviewSchema = z.object({
+  asOf: z.string(),
+  kpis: z.object({
+    activeProjects: z.number().int().nonnegative(),
+    atRisk: z.number().int().nonnegative(),
+    /** Projects whose current-week RAG is Green AND previous-week RAG was non-Green. */
+    recoveredThisWeek: z.number().int().nonnegative(),
+    overBudget: z.number().int().nonnegative(),
+    launchingSoon: z.number().int().nonnegative(),
+    hours7d: z.number().nonnegative(),
+    hours30d: z.number().nonnegative(),
+    activeCustomers: z.number().int().nonnegative(),
+  }),
+  projects: z.array(
+    z.object({
+      projectId: z.string(),
+      projectName: z.string(),
+      customerId: z.string().nullable(),
+      customerName: z.string().nullable(),
+      phase: PhaseSchema,
+      state: ProjectStateSchema,
+      /** Derived from `details.fintech_parent` server-side. */
+      projectType: ProjectTypeSchema,
+      latestRagLevel: RagLevelSchema.nullable(),
+      /** ≥1 only when the latest RAG is non-Green. Otherwise 0. */
+      weeksStuckAtLevel: z.number().int().nonnegative(),
+      /** Days since the last entry in PhaseAuditLog. Null when no transition recorded. */
+      daysInCurrentPhase: z.number().int().nullable(),
+      /** Sum across pinned Harvest projects. Null when no pinned row has a budget. */
+      budgetHours: z.number().nullable(),
+      /** Sum of (billable + non-billable) spent hours across pinned Harvest projects. Null when no pinned rows. */
+      spentHours: z.number().nullable(),
+      pctOfBudget: z.number().nullable(),
+      slipDays: z.number().int().nullable(),
+      last30DaysHours: z.number().nonnegative(),
+    }),
+  ),
+  people: z.array(
+    z.object({
+      personId: z.string(),
+      name: z.string(),
+      email: z.string(),
+      role: RoleSchema,
+      isAdmin: z.boolean(),
+      harvestUserId: z.string().nullable(),
+      defaultCapacityPct: z.number().int().min(0).max(100),
+      availabilityPct: z.number().int().min(0).max(100),
+      committedPct: z.number().int().nonnegative(),
+      last7DaysHours: z.number().nullable(),
+      last30DaysHours: z.number().nullable(),
+      activeProjectCount: z.number().int().nonnegative(),
+      overCommittedBy: z.number().int().nonnegative(),
+    }),
+  ),
+  trends: z.object({
+    /** 8 entries, oldest first. */
+    weeklyHours: z.array(
+      z.object({ weekOf: isoDate, hours: z.number().nonnegative() }),
+    ),
+    weeklyRag: z.array(
+      z.object({
+        weekOf: isoDate,
+        red: z.number().int().nonnegative(),
+        amber: z.number().int().nonnegative(),
+        green: z.number().int().nonnegative(),
+      }),
+    ),
+  }),
+});
+export type InsightsOverview = z.infer<typeof InsightsOverviewSchema>;

@@ -4,7 +4,7 @@ import 'virtual:uno.css';
 import '@unocss/reset/tailwind.css';
 import './app.css';
 import { AuthProvider } from './auth/AuthProvider.js';
-import { RequireAdmin, RequireAuth } from './auth/RequireAuth.js';
+import { RequireAdmin, RequireAuth, RequirePM } from './auth/RequireAuth.js';
 import { NavShell } from './components/NavShell.js';
 import { SignInPage } from './routes/signin.js';
 import { PortfolioDashboardPage } from './routes/dashboard.js';
@@ -18,6 +18,7 @@ import { RisksPage } from './routes/risks.js';
 import { TimelinePage } from './routes/timeline.js';
 import { PersonDetailPage } from './routes/person-detail.js';
 import { TrackersPage } from './routes/trackers.js';
+import { InsightsPage } from './routes/insights.js';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
@@ -48,6 +49,14 @@ export function App() {
               <Route path="capacity" element={<CapacityPage />} />
               <Route path="risks" element={<RisksPage />} />
               <Route path="timeline" element={<TimelinePage />} />
+              <Route
+                path="insights"
+                element={
+                  <RequirePM>
+                    <InsightsPage />
+                  </RequirePM>
+                }
+              />
               <Route
                 path="trackers"
                 element={

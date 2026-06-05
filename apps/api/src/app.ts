@@ -22,6 +22,8 @@ import { registerCustomerRoutes } from './routes/customers.js';
 import { registerWorkloadRoutes } from './routes/workload.js';
 import { registerPeopleOverviewRoutes } from './routes/people-overview.js';
 import { registerSearchRoutes } from './routes/search.js';
+import { registerInsightsRoutes } from './routes/insights.js';
+import { registerInsightsChatRoutes } from './routes/insights-chat.js';
 import { setupSync } from './sync/setup.js';
 import { getPrisma, type DB } from './db.js';
 import type { Env } from './env.js';
@@ -64,6 +66,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerWorkloadRoutes(app, { db });
   registerPeopleOverviewRoutes(app, { db });
   registerSearchRoutes(app, { db });
+  registerInsightsRoutes(app, { db, env: opts.env });
+  registerInsightsChatRoutes(app, { db, env: opts.env });
 
   const engine = setupSync({
     db,

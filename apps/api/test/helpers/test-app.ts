@@ -25,6 +25,8 @@ const baseEnv: Env = {
   HARVEST_REDIRECT_URI: '',
   TRACKER_TOKEN_KEY: '0'.repeat(64),
   ENABLE_SYNC_CRON: false,
+  ANTHROPIC_API_KEY: '',
+  INSIGHTS_CHAT_MODEL: 'claude-sonnet-4-6',
 };
 
 export function buildTestApp(db: Partial<DB>, envOverride: Partial<Env> = {}) {

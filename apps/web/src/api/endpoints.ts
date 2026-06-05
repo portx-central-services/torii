@@ -3,6 +3,7 @@ import type {
   CustomerReconciliation,
   DashboardSummary,
   HarvestClientListItem,
+  InsightsOverview,
   MyWeekProject,
   PeopleOverviewRow,
   Phase,
@@ -20,6 +21,7 @@ export type {
   CustomerReconciliation,
   DashboardSummary,
   HarvestClientListItem,
+  InsightsOverview,
   MyWeekProject,
   PeopleOverviewRow,
   RisksWithStale,
@@ -412,7 +414,98 @@ export const endpoints = {
   // Topbar global search
   search: (q: string) =>
     api.get<SearchResults>('/api/search', { q }),
+
+  // Insights — PM-only portfolio overview
+  getInsightsOverview: () =>
+    api.get<InsightsOverview>('/api/insights/overview'),
 };
+
+/** One event from the SSE stream returned by `POST /api/insights/chat`. */
+export type InsightsChatEvent =
+  | { type: 'text_delta'; text: string }
+  | { type: 'tool_call'; name: string; status: 'started' | 'completed'; summary?: string }
+  | { type: 'done' }
+  | { type: 'error'; message: string };
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/**
+ * POST to `/api/insights/chat` and consume the SSE stream, invoking `onEvent`
+ * for each parsed event. Resolves when the server emits `done` or the response
+ * stream closes. Pass an `AbortSignal` to cancel mid-flight (page unmount, new
+ * prompt, etc).
+ */
+export async function streamInsightsChat(opts: {
+  messages: ChatMessage[];
+  onEvent: (event: InsightsChatEvent) => void;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const response = await fetch('/api/insights/chat', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages: opts.messages }),
+    signal: opts.signal,
+  });
+
+  if (!response.ok) {
+    // The 503 / 403 paths return JSON, not SSE.
+    let message = `Chat request failed (${response.status})`;
+    try {
+      const body = (await response.json()) as { error?: string };
+      if (body.error) message = body.error;
+    } catch {
+      // ignore parse failure
+    }
+    opts.onEvent({ type: 'error', message });
+    return;
+  }
+
+  const body = response.body;
+  if (!body) {
+    opts.onEvent({ type: 'error', message: 'No response body' });
+    return;
+  }
+
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // SSE events are delimited by a blank line. Each event is one or more
+      // `field: value` lines.
+      const events = buffer.split('\n\n');
+      buffer = events.pop() ?? '';
+      for (const raw of events) {
+        const lines = raw.split('\n');
+        const dataLines = lines.filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trimStart());
+        if (dataLines.length === 0) continue;
+        const payload = dataLines.join('\n');
+        try {
+          const parsed = JSON.parse(payload) as InsightsChatEvent;
+          opts.onEvent(parsed);
+          if (parsed.type === 'done' || parsed.type === 'error') return;
+        } catch {
+          // skip malformed event
+        }
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // already released
+    }
+  }
+}
 
 /** Result shape from `GET /api/search?q=...`. Each list capped server-side. */
 export interface SearchResults {

@@ -95,6 +95,8 @@ export const DEFAULT_FIELD_MAPPING: Record<string, FieldOwner> = {
   'details.finance_use_case': 'monday',
   'details.use_case_group': 'monday',
   'details.customer_status': 'monday',
+  // Monday-sourced (from "Fintech Parent", falling back to "Fintech").
+  'details.fintech_parent': 'monday',
   // No Monday source — PM-managed.
   'details.primary_contact': 'torii',
 };

@@ -5,6 +5,7 @@ import {
   CapacityIcon,
   CustomersIcon,
   DashboardIcon,
+  InsightsIcon,
   PeopleIcon,
   ProjectsIcon,
   RisksIcon,
@@ -36,9 +37,13 @@ export function NavShell() {
                 ? 'Risks'
                 : location.pathname === '/timeline'
                   ? 'Timeline'
-                  : location.pathname === '/trackers'
-                    ? 'Trackers'
-                    : 'Projects';
+                  : location.pathname === '/insights'
+                    ? 'Insights'
+                    : location.pathname === '/trackers'
+                      ? 'Trackers'
+                      : 'Projects';
+
+  const canSeeInsights = user?.role === 'PM' || user?.isAdmin === true;
 
   return (
     <div className="app-shell">
@@ -98,6 +103,15 @@ export function NavShell() {
             <CapacityIcon className="nav-icon" />
             <span>Capacity</span>
           </NavLink>
+          {canSeeInsights && (
+            <NavLink
+              to="/insights"
+              className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}
+            >
+              <InsightsIcon className="nav-icon" />
+              <span>Insights</span>
+            </NavLink>
+          )}
           {user?.isAdmin && (
             <NavLink
               to="/trackers"
