@@ -8,4 +8,4 @@
 # review when someone opens a pull request.
 * @portx-central-services/Administrators @portx-central-services/code-reviewer @portx-central-services/superadmin
 
-/.github/workflow-templates/portx-*  @portx-iam
+/.github/workflow-templates/portx-*  @portx-central-services/superadmin
